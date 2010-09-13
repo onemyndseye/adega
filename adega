@@ -7,7 +7,7 @@
 ##
 ##       CHANGES:  Changed menu structure to basic list for easy navigation. Added
 ##                 function to check for an adega update. Various polishing and bug
-##                 fixes. 
+##                 fixes.
 ##
 ##          BUGS:  plenty
 ##
@@ -133,7 +133,7 @@ rm -rfd ~/.adega-installer.tmp/
 
 adega_updater() {
 PID="$1"
-URL="http://onemyndseye.doesntexist.com/linux/projects/adega/adega"
+URL="http://github.com/onemyndseye/adega/raw/master/adega"
 
 # Update from cmdline
 [ -z "$ADEGA_AGE" ] && ADEGA_AGE=1

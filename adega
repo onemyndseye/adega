@@ -1,0 +1,1483 @@
+#!/bin/bash
+##################################################################################
+##          FILE:  adega
+##       VERSION:  0.7-5
+##       CREATED:  08/20/2010
+##       UPDATED:  09/10/2010  09:36:22 CDT 2010
+##
+##       CHANGES:  Changed menu structure to basic list for easy navigation. Added
+##                 function to check for an adega update. Various polishing and bug
+##                 fixes. 
+##
+##          BUGS:  plenty
+##
+##   DESCRIPTION:  Derrived from the Portugese word for wine estate or wine cellar,
+##                 Adega is a simple program to help with the task of managing and
+##                 configuring your wine prefixes doing so completely independant
+##                 of your systems default wine install and prefix.
+##
+##       OPTIONS:  see --help
+##  REQUIREMENTS:  curl, icoutils, imagemagick, python
+##     MAYBE ALSO: ia32-libs lib32asound2 libc6-i386 lib32nss-mdns binfmt-support
+##                 winbind ttf-symbol-replacement, ttf-mscorefonts-installer
+##
+##        AUTHOR:  Justin Whittington (onemyndseye@yahoo.com)
+##         NOTES:  No Oracle, it DOES NOT depend on wine :P
+###################################################################################
+
+###################################### Variables and Settings ########################################
+# Default location for the wine-cellar
+CELLAR=$HOME/wine-cellar
+
+# Precompiled versions of wine are obtained from this source.  Thanks to the
+# PlayOnLinux guys.  Will probably mirror this eventually
+WINE_REPO="http://mulx.playonlinux.com/wine/linux-i386"
+
+# Age in days before winetricks and wisotool are checked for an update
+WINETRICKS_AGE=7
+
+# Age in days before adega is checked for an update.
+ADEGA_AGE=7
+
+################# Any of these settings can be overridden in adega-prefix.cfg ########################
+######################################################################################################
+# Default DLL overrides.  We dont want wine molesting our
+# menus
+WINEDLLOVERRIDES=winemenubuilder.exe=d
+
+# Filter out Lnks/exe's that match these patterns
+IGNORE_PATTERNS="application data|iexplore|temp|installshield|safe mode|uninstall|http:|.url|.htm|.html|.pdf|.txt|.doc"
+
+# File masks for the program chooser
+FILE_MASKS="*.exe *.msi"
+
+# By default we only want to show LNKs. Uncomment  the other
+# to make default.  If no programs are found by scanning by the
+# configured settings a full search is performed.
+SHOW_LNKS=1
+#SHOW_EXES=1
+
+# Rebuild installed program list every time the menu is shown.  Slower
+# but more accurate.
+AUTO_REBUILD_PROGRAMS=1
+########################################################################################################
+#######################################  END Settings ##################################################
+
+
+##########################################   Functions #################################################
+do_help() {
+ADEGA=$(basename $0)
+cat <<HELP_EOF
+Adega :: Derrived from the Portugese word for wine estate or wine cellar, Adega is
+         a simple program to help with the task of managing and configuring your wine
+         prefixes doing so completely independant of your systems default wine install
+         and prefix.
+
+Usage: $ADEGA   <options>
+        --cellar  <Path>            :: Specify a cellar other than the default
+                                       ($CELLAR)
+
+        --prefix  <Prefix>          :: Select a prefix by its short name (basename)
+
+        --run     <Win32 EXE/LNK>   :: Select a EXE or LNK file to run in the specified
+                                       prefix.  This option must be last and must be
+                                       preceeded by the --prefix switch.
+
+        --env     <Command (args)>  :: Allows running any command inside a given wine
+                                       enviroment.  This option must be last and must
+                                       be proceeded by the --prefix switch.  This option
+                                       automattically sets up the all of the relevant
+                                       wine enviroment variables including WINEPREFIX
+                                       WINEDLLPATH, WINELOADER, WINEVERSION, WINEVERPATH
+                                       before executing the given command.
+
+        --update                    :: Check for an adega update.
+
+        --help                      :: This message.
+
+        --help-all                  :: This message plus helpful examples.
+
+HELP_EOF
+
+[ -z "$EXAMPLES" ] && exit 0
+cat <<EXAMPLES_EOF
+Examples: $ADEGA
+          Run in GUI Mode
+
+          $ADEGA --prefix myapp
+          Run in GUI mode with the prefix "myapp" preselected
+
+          $ADEGA --prefix myapp --run
+          GUI mode with "myapp" preselected and show installed
+          programs.
+
+          $ADEGA --prefix myapp --run ~/downloads/newapp.exe
+          Launch newapp.exe inside the "myapp" prefix
+
+          $ADEGA --prefix myapp --env ~/scripts/winetricks
+          Run the winetricks script given inside "myapp"
+
+          $ADEGA --prefix myapp --env wine regedit
+          Run regedit inside the prefix "myapp"
+
+EXAMPLES_EOF
+exit 0
+}
+
+do_cleanup() {
+##  I myself am not even sure now why I have 2 tmps
+rm -rfd "$TMPWORKING"
+rm -rfd "$TMPBUILD"
+rm -rfd ~/.adega-installer.tmp/
+}
+
+adega_updater() {
+PID="$1"
+URL="http://onemyndseye.doesntexist.com/linux/projects/adega/adega"
+
+# Update from cmdline
+[ -z "$ADEGA_AGE" ] && ADEGA_AGE=1
+
+if [ -f $ADEGA_SCRIPT ]; then
+  # Check the age
+  CHK="$(find $ADEGA_SCRIPT -mtime +${ADEGA_AGE})"
+  [ -n "$UPDATE_NOW" ] && CHK=1
+  if [ -n "$CHK" ]; then
+    # Age limit reached - check for update
+    curl -L -s -f "$URL"  >/dev/null && URL_ERROR="" || URL_ERROR=1
+    if [ -z "$URL_ERROR" ]; then
+      # More more check for valid script
+      SCRIPT_CHK="$(curl -L -s -f "$URL" |grep -F "#!/bin/bash")"
+      [ -z "$SCRIPT_CHK" ] && return 1
+      REMOTE_MD5="$(curl -L -s "$URL" |md5sum |awk '{print $1}')"
+      LOCAL_MD5="$(cat $ADEGA_SCRIPT |md5sum |awk '{print $1}')"
+      if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
+        # An update is available
+        MSG="An updated version of adega is available. Would you like to update the local copy?"
+        zenity --question --title="Adega: adega updater" --text="$MSG" && DO_UPDATE=1 || DO_UPDATE=""
+        if [ -n "$DO_UPDATE" ]; then
+          # Proceed with update
+          cp $ADEGA_SCRIPT ${ADEGA_SCRIPT}-backup
+          curl -s -L $URL >$ADEGA_SCRIPT
+          chmod +x $ADEGA_SCRIPT
+          ( sleep 1 ; $ADEGA_SCRIPT ) &
+          exit 0
+        else
+          # Skip the update this time.  Ask again in $ADEGA_AGE
+          touch $ADEGA_SCRIPT
+        fi
+      fi
+    fi
+  fi
+fi
+}
+
+prefix_cleaner() {
+rm -rfd ${PREFIX}/drive_c/users/onemyndseye/Temp/*
+rm -rfd ${PREFIX}/drive_c/windows/temp/*
+rm -rfd "${PREFIX}/drive_c/Program Files/InstallShield Installation Information/"
+
+}
+make_icon() {
+## This ripped pretty much straight from gnome-exe-thumbnailer
+TEMPFILE1=$(mktemp)
+TEMPFILE2=$(mktemp)
+TEMPTHUMB=$(mktemp)
+DEURLEDFILE=$(python -c 'import sys, urlparse, urllib; print urllib.unquote(urlparse.urlparse(sys.argv[1]).path)' "$1")
+
+if wrestool --extract --type=group_icon "$DEURLEDFILE" > $TEMPFILE1 && [ -s $TEMPFILE1 ]
+then
+	read INDEX OFFSET < <(
+		icotool --list $TEMPFILE1 | awk '{
+			ci=int(substr($2,index($2,"=") + 1));
+			cw=int(substr($3,index($3,"=") + 1));
+			cb=int(substr($5,index($5,"=") + 1));
+
+			if ((cw > w && cw <= 32) || (cw == w && cb > b)) {
+				b = cb;
+				w = cw;
+				i = ci;
+			}
+		}
+		END {
+			print i, 16 + (32 - w) / 2;
+		}'
+	)
+
+	icotool --extract --index=$INDEX $TEMPFILE1 -o $TEMPFILE2
+        cp $TEMPFILE2 $TEMPTHUMB
+else
+        ## Was unable to create an icon.  User must select one
+        cd ~
+        TEXT="Could not create a png to use as an icon. Please select one manually."
+        zenity --info --title="Adega: icon creator" --text="$TEXT"
+        rm $TEMPTHUMB
+        TEMPTHUMB="$(zenity --file-selection --file-filter="*.png")"
+fi
+
+cp $TEMPTHUMB $2
+rm  $TEMPFILE1 $TEMPFILE2 $TEMPTHUMB
+}
+
+make_launcher() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+## Will need a wine env
+wine_env
+
+program_chooser
+
+# $RUNLNK and $LNK_NAME should now be set
+EXE="$(WINEPREFIX=$PREFIX winepath -u "$RUNLNK")"
+NAME="$(zenity --entry  --text "Enter a name for this launcher." --entry-text="$LNK_NAME")"
+DESC="$(zenity --entry  --text "Enter a discription for this launcher" --entry-text="$LNK_NAME")"
+PROGRAM_ARGS="$(zenity --entry  --text "Enter any needed command line options")"
+TITLE="Adega: Make Launcher"
+TXT1="Select the propper category for this launcher. This affects were your launcher appears in your menus."
+TXT2="Multiples may be selected but take care to only select as many as needed."
+MSG="${TXT1} \n ${TXT2}"
+
+LST1="TRUE Application FALSE AudioVideo FALSE Development FALSE Emulator FALSE Game"
+LST2="FALSE Graphics FALSE Network FALSE Office FALSE System FALSE Utility"
+LIST="$LST1 $LST2"
+CATES="$(zenity --list --checklist --title="$TITLE" --text="$MSG" --separator=";" --column " " --column "Categories" $LIST)"
+
+mkdir -p ~/.local/share/icons/adega/
+mkdir -p ~/.local/share/applications/
+
+TMP1="$(echo $NAME | sed '{s/ /_/g}')"
+FILE_NAME="adega-$(basename $PREFIX)-${TMP1}"
+
+ICON="$HOME/.local/share/icons/adega/${FILE_NAME}.png"
+make_icon "$EXE" "$ICON"
+
+## Set Launcher File name
+LAUNCHER="$HOME/.local/share/applications/${FILE_NAME}.desktop"
+
+
+## Write the Desktop Entry
+cat <<NEWLAUNCHER_EOF >"$LAUNCHER"
+[Desktop Entry]
+Name=$NAME
+GenericName=$DESC
+Exec=adega --prefix "$(basename $PREFIX)" --run "$EXE" $PROGRAM_ARGS
+Terminal=false
+Type=Application
+Icon=$ICON
+Categories=$CATES
+StartupNotify=true
+NEWLAUNCHER_EOF
+
+}
+
+wine_set_vidmem() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+## Setup WINE enviroment
+wine_env
+
+# Fill autodetected settings
+VGA_PCIID="$(lspci |grep VGA |sed -e 's/^\([^ ]* \).*/\1/')"
+VGA_MEMORYSIZE="$(lspci -v -s $VGA_PCIID |grep Memory |sed -e 's/.*size=\([0-9]*\).*/\1/' |sort -g |tail -n1)"
+
+# Ask user for value
+MSG="Set video memory size in MB"
+TITLE="Adega: $(basename $PREFIX) - Video memory"
+ARGS="--min-value=16 --max-value=2048 --step=8"
+MEMORYSIZE=$(zenity --scale --title=$TITLE --text="$MSG" $ARGS --value=$VGA_MEMORYSIZE)
+
+REGFILE="$PREFIX/drive_c/tmpreg.reg"
+cat <<REG_EOF >$REGFILE
+[HKEY_CURRENT_USER\Software\Wine\Direct3D] 1209735725
+"VideoMemorySize"="@@VIDEO_MEMORY@@"
+REG_EOF
+
+sed -i -e "s/@@VIDEO_MEMORY@@/$MEMORYSIZE/" $REGFILE
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" "C:\Windows\regedit.exe" $REGFILE
+rm -f $REGFILE
+return 0
+}
+wine_env() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+# If Wineversion isnt set make a last ditch effort to detect
+# the latest installed version and continue
+if [ -z "$WINEVERSION" ]; then
+  cd $CELLAR/WineVersions/
+  COUNT="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r | wc -l)"
+  if [ $COUNT = 0 ]; then
+    # No wineversions installed.  Call the installer
+    wine_install
+    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
+  else
+    # Choose the latest
+    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
+  fi
+fi
+
+WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION" 
+WINESERVER="$WINEVERPATH/usr/bin/wineserver" 
+WINELOADER="$WINEVERPATH/usr/bin/wine" 
+WINEDLLPATH="$WINEVERPATH/usr/lib/wine" 
+LD_LIBRARY_PATH="$WINEVERPATH/usr/lib/wine/:$LD_LIBRARY_PATH"
+WINE_BIN="$WINEVERPATH/usr/bin/wine" 
+PATH=$WINEVERPATH/usr/bin:$PATH
+}
+
+exec_wine() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+EXE="$1"
+
+OLD_VIDMODE="$(xrandr |grep "Screen 0" | awk '{print $8 $9 $10}' |sed '{s|,||}')"
+wine_env
+OUTPUT_VERSION="$(WINEPREFIX=$PREFIX "$WINE_BIN" --version)"
+echo "Wine version: $OUTPUT_VERSION"
+
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" start "$EXE" $PROGRAM_ARGS
+
+EXT=${EXE##*.}
+if [ "$EXT" = "lnk" ]; then
+  PROG="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
+else
+  PROG="$EXE"
+fi
+
+if [ -n "$PROG" ]; then
+  EXIT=0  
+  while [ $EXIT = "0" ]
+  do
+      TMP1=$(ps ax |grep -F "$PROG" |grep -v grep |awk '{print $1}')
+      if [ -z "$TMP1" ]; then
+        EXIT=1
+      fi
+      sleep 0.5
+  done
+fi
+# Make sure the original desktop resolution gets restored
+xrandr -s "$OLD_VIDMODE"
+exit 0
+}
+
+exec_winecfg() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+wine_env
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES winecfg
+}
+
+exec_winetricks() {
+
+if [ -f ~/.adega/winetricks.sh ]; then
+  # Check the age
+  CHK="$(find ~/.adega/winetricks.sh -mtime +${WINETRICKS_AGE})"
+  if [ -n "$CHK" ]; then
+    # Age limit reached - check for update
+    curl -s -f http://winezeug.googlecode.com/svn/trunk/winetricks >/dev/null && URL_ERROR="" || URL_ERROR=1
+    if [ -z "$URL_ERROR" ]; then
+      REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/winetricks |md5sum |awk '{print $1}')"
+      LOCAL_MD5="$(cat ~/.adega/winetricks.sh |md5sum |awk '{print $1}')"
+      if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
+        # An update is available
+        MSG="An updated version of winetricks is available. Would you like to update the local copy?"
+        zenity --question --title="Adega: winetricks updater" --text="$MSG" && DO_UPDATE=1 || DO_UPDATE=""
+        if [ -n "$DO_UPDATE" ]; then
+          # Proceed with update
+          rm -f ~/.adega/winetricks.sh
+          curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >~/.adega/winetricks.sh
+          chmod +x ~/.adega/winetricks.sh
+        else
+          # Skip the update this time.  Ask again in $WINETRICKS_AGE
+          touch ~/.adega/winetricks.sh
+        fi
+      fi
+    fi
+  fi
+else
+  # Need to get winetricks
+  mkdir -p ~/.adega/
+  curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >~/.adega/winetricks.sh
+  chmod +x ~/.adega/winetricks.sh
+fi
+
+wine_env
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/winetricks.sh
+}
+
+exec_wisotool() {
+if [ -f ~/.adega/wisotool.sh ]; then
+  # Check the age
+  CHK="$(find ~/.adega/wisotool.sh -mtime +${WINETRICKS_AGE})"
+  if [ -n "$CHK" ]; then
+    # Age limit reached - check for update
+    curl -s -f http://winezeug.googlecode.com/svn/trunk/wisotool >/dev/null && URL_ERROR="" || URL_ERROR=1
+    if [ -z "$URL_ERROR" ]; then
+      REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/wisotool |md5sum |awk '{print $1}')"
+      LOCAL_MD5="$(cat ~/.adega/wisotool.sh |md5sum |awk '{print $1}')"
+      if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
+        # An update is available
+        MSG="An updated version of wisotool is available. Would you like to update the local copy?"
+        zenity --question --title="Adega: wisotool updater" --text="$MSG" && DO_UPDATE=1 || DO_UPDATE=""
+        if [ -n "$DO_UPDATE" ]; then
+          # Proceed with update
+          rm -f ~/.adega/wisotool.sh
+          curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >~/.adega/wisotool.sh
+          chmod +x ~/.adega/wisotool.sh
+        else
+          # Skip the update this time.  Ask again in $WINETRICKS_AGE
+          touch ~/.adega/wisotool.sh
+        fi
+      fi
+    fi
+  fi
+else
+  # Need to get wisotool
+  mkdir -p ~/.adega/
+  curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >~/.adega/wisotool.sh
+  chmod +x ~/.adega/wisotool.sh
+fi
+
+wine_env
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/wisotool.sh
+}
+
+
+create_prefix() {
+MSG="Enter a directory name for this prefix:"
+NAME="$(zenity --entry  --text="$MSG")"
+PREFIX="${CELLAR}/${NAME}"
+mkdir -p "$PREFIX"
+
+prefix_options "return"
+
+wine_env
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" null.exe 2>&1 >/dev/null
+
+MSG="Would you like to see the tools menu now"
+zenity --question --text="$MSG" && TOOLS=1 || TOOLS=""
+if [ -n "$TOOLS" ]; then
+  winetools_menu "return"
+fi
+
+}
+
+get_programs() {
+## Function to list Programs in $PREFIX lnks first.
+
+if [ -n "$SHOW_LNKS" ]; then
+  find $PREFIX -name "*.lnk" |egrep -i -v  "$IGNORE_PATTERNS" | tee >(zenity --progress --pulsate --auto-kill --auto-close)
+fi
+if [ -n "$SHOW_EXES" ]; then
+  find $PREFIX -name "*.exe" -not -wholename "$PREFIX/drive_c/windows/*" -not \
+                      -wholename "$PREFIX/drive_c/Program Files/Common Files/*" \
+                      |egrep -i -v  "$IGNORE_PATTERNS" \
+                      |tee >(zenity --progress --pulsate --auto-kill --auto-close)
+fi
+}
+
+build_program_list() {
+## Will need a wine env
+wine_env
+
+LIST=$PREFIX/adega-programs.list
+
+### Build a EXE List
+TMP_LIST=$(mktemp)
+IFS=$'\n'
+for i in $(get_programs); do
+   EXT=${i##*.}
+   if [ "$EXT" = "lnk" ]; then
+     NAME="$(basename "$i" |sed '{s|.lnk||}')"
+     EXE="$(strings "$i" | grep -m1 '[A-Z]:\\.')"
+     LNK="$(WINEPREFIX=$PREFIX winepath -w "$i")"
+
+     FILTER_CHECK="$(echo $EXE | egrep -i -v  "$IGNORE_PATTERNS")"
+     if [ -n "$FILTER_CHECK" ]; then
+       echo "$NAME ::: $LNK" >>$TMP_LIST
+     fi
+   else
+     EXE="$(WINEPREFIX=$PREFIX winepath -w "$i")"
+     NAME="$(echo $(basename $(WINEPREFIX=$PREFIX winepath -u "$EXE")) |sed '{s|.exe||;s|.EXE||}')"
+     ## Check for dupes
+     CHK_DUPE="$(cat $TMP_LIST |grep -F "$(basename "$EXE")")" 
+     if [ -z "$CHK_DUPE" ]; then 
+       echo "$NAME ::: $EXE" >>$TMP_LIST
+     fi
+   fi
+done
+## Format the list
+TMP_MENU=$(mktemp)
+cat $TMP_LIST |egrep -i -v  "$IGNORE_PATTERNS" >>$TMP_MENU
+chklist="$(cat $TMP_MENU |sed 's/^[ \t]*//;s/[ \t]*$//' | sed '/^$/d' |wc -l)"
+if [ $chklist = 0 ]; then
+  if [ -z "$RETRY_SEARCH" ]; then
+    RETRY_SEARCH=1
+    # Didnt get any apps.  Try full search
+    SHOW_LNKS=1
+    SHOW_EXES=1
+    rm -f $TMP_LIST
+    rm -f $TMP_MENU
+    build_program_list
+    return 0
+  else
+    echo "Was unable to find any programs to run.  Please try running manually."
+    exit 1
+  fi
+fi
+cat $TMP_MENU >$LIST
+rm -f $TMP_LIST
+rm -f $TMP_MENU
+}
+
+############################################# Various Choosers #######################################################
+wine_exe_chooser() {
+cd ~
+RUNLNK=$(zenity --file-selection --file-filter="$FILE_MASKS")
+}
+
+program_chooser() {
+LIST=$PREFIX/adega-programs.list
+[ -n "$AUTO_REBUILD_PROGRAMS" ] && build_program_list
+[ ! -f "$LIST" ] && build_program_list
+
+WIDTH=800
+HGHT=600
+
+TITLE="$(basename $PREFIX) :: Available Windows Programs"
+TEXT="Select a program to run"
+PROGRAM=$(cat $LIST | zenity --list --width=$WIDTH --height=$HGHT --title="$TITLE" --text="$TEXT" --column "Programs")
+
+RUNLNK="$(echo $PROGRAM |sed '{s|::: |::: \n|}' |grep -v ":::")"
+LNK_NAME="$(echo $PROGRAM | sed '{s| :::|\n :::|}'|grep -v ":::")"
+}
+
+prefix_chooser() {
+cd $CELLAR
+WIDTH=640
+HGHT=480
+MSG="Select a WINE Prefix"
+CHOICE="$(ls -p -1 |grep "/" |grep -v "WineVersions" |sed '{s|/||g}' \
+   | zenity --list --width=$WIDTH --height=$HGHT --title="Adega" --text="$MSG" --column="WINE Prefix"
+)"
+
+if [ -n "$CHOICE" ]; then
+  PREFIX=$CELLAR/$CHOICE
+  if [ -f $PREFIX/adega-prefix.cfg ]; then
+    . $PREFIX/adega-prefix.cfg
+  else
+    MSG="Afew options need to be set for this prefix"
+    zenity --info --text="$MSG"
+    prefix_options "return"
+    . $PREFIX/adega-prefix.cfg
+  fi
+else
+  echo "Must select a valid prefix"
+  exit 1
+fi
+}
+
+wine_chooser() {
+cd $CELLAR/WineVersions
+COUNT=$(ls -p -1 |grep "/" |wc -l)
+if [ $COUNT = 0 ]; then
+    # No wineversions installed.  Call the installer
+    wine_install
+    wine_chooser
+    return 0
+else
+  WIDTH=640
+  HGHT=480
+  TITLE="Adega: $(basename $PREFIX)"
+  TEXT="Select a WINE Version"
+  CHOICE="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r \
+  | zenity --list --width=$WIDTH --height=$HGHT --title="$TITLE" --text="$TEXT" --column="WINE Version"
+  )"
+  if [ -n "$CHOICE" ]; then
+    WINEVERSION=$CHOICE
+  else
+    echo "Must select a valid wine version"
+    exit 1
+  fi
+fi
+}
+################################################# END Various Choosers ##############################################
+
+reset_prefix() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+wine_env
+WINEPREFIX=$PREFIX wineserver -k
+WINEPREFIX=$PREFIX wineboot
+
+}
+run_prefix() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg || echo "NO SETTINGS"
+
+RUNLNK="$1"
+
+## Sanity check
+if [ ! -d "$PREFIX" ]; then
+  echo "$PREFIX is a invalid WINE prefix .."
+  exit 1
+fi
+
+## Set Wine env
+wine_env
+
+if [ -z "$RUNLNK" ]; then
+  program_chooser
+  EXE="$RUNLNK"
+else
+  EXE="$(WINEPREFIX=$PREFIX winepath -w "$RUNLNK")"
+fi
+
+if [ -n "$EXE" ]; then
+  EXT=${EXE##*.}
+  if [ "$EXT" = "lnk" ]; then
+    TARGET_EXE="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
+    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath -u "$TARGET_EXE")")"
+  else
+    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath "$EXE")")"
+  fi
+  LOG="${PREFIX}/last-session.log"
+  cd "${TARGET}"
+  echo "Will use the following prefix:  $PREFIX"
+  echo "Will log messages to $LOG .."
+  echo "Starting $EXE ..."
+  [ -n "$TARGET_EXE" ] && echo "Target EXE: $TARGET_EXE ..."
+  echo "CWD is: $(pwd) .."
+  exec_wine "$EXE" >$LOG 2>&1
+else
+  echo "An error has occured!! .."
+  exit 23
+fi
+}
+
+
+wine_install() {
+mkdir -p "${CELLAR}/WineVersions/tmp"
+cd "${CELLAR}/WineVersions/tmp"
+
+VERSIONS=$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |g}' |awk '{print $2}' |sort -r)
+unset list
+for i in $VERSIONS; do
+    list+=("FALSE")
+    list+=("$i")
+done
+MSG="Select wine versions to install"
+MSG1="Available WINE Versions"
+WINE_INSTALL_VERSIONS="$(zenity --list --checklist --title="$MSG1" --separator="\n" \
+--title="Wine Installer" --text="$MSG" --column " " --column "Versions" "${list[@]}"
+)"
+unset list
+
+if [ -n "$WINE_INSTALL_VERSIONS" ]; then
+  for i in $WINE_INSTALL_VERSIONS; do
+    # Check to make sure its not already installed 
+    CHK="${CELLAR}/WineVersions/${i}"
+    if [ ! -d $CHK ]; then
+      # Everything looks ok.  Proceed
+      WINE_BOTTLE_FILE="$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |; s|;| |}' |grep -m 1 -F "wine-${i}." |awk '{print $1}')"
+      WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
+
+      # Download WINE
+      do_download "$WINE_URL" "Downloading WINE $i" "${CELLAR}/WineVersions/tmp" 
+      if [ "$?" != "0" ]; then
+        # WINE download failed.
+        zenity  --error --title "Alert"  --text="Download of WINE failed! Aborting.."
+        exit 300 
+      fi
+      ( ## Subshell for zenity install progress
+      # Extract WINE
+      tar -xvf $WINE_BOTTLE_FILE
+      if [ "$?" != "0" ]; then
+        # WINE extract failed.
+        zenity  --error --title "Alert"  --text "Unpacking WINE failed! Aborting.."
+        exit 302
+      fi
+      ) |zenity --progress --pulsate --title="Installing wine $i ..." --auto-close --auto-kill
+    fi
+  done
+  mv ${CELLAR}/WineVersions/tmp/wineversion/* ${CELLAR}/WineVersions/.
+  rm -rfd "${CELLAR}/WineVersions/tmp"
+  zenity --info --text="Operation complete."
+  return 0
+else
+  zenity --error --text="No versions of wine selected for installation"
+  return 1
+fi
+}
+
+do_download() {
+DOWNLOAD_URL="$1"
+TEXT="$2"
+DEST="$3"
+
+DL_CDIR=$(pwd)
+SED_STRING="s/.* \([0-9]\+%\)\ \+\([0-9.]\+.\) \(.*\)/\1\n# Downloading at \2\/s, ETA \3/"
+
+cd "$DEST"
+wget $DOWNLOAD_URL 2>&1 | sed -u "$SED_STRING" | zenity --progress --title="$TEXT" --auto-close --auto-kill
+WGET_STAT=$?
+kill -9 "$(ps ax |grep "wget" |grep "$DOWNLOAD_URL" |grep -v "grep" |awk '{print $1}')" 2>&1 >/dev/null
+
+cd "$DL_CDIR"
+return $?
+}
+
+#######################################################################################################################################
+####################################################### Bottles and Related ###########################################################
+do_copy(){
+#===  FUNCTION  ================================================================
+#          NAME: do_copy()  
+#   DESCRIPTION: Wrapped function around copy_cmd()
+#           USE: do_copy SOURCE DESINATION TEXT
+#===============================================================================
+SOURCE="$1"
+DEST="$2"
+TEXT="$3"
+
+copy_cmd "$SOURCE" "$DEST" | zenity --progress --auto-close --auto-kill --title "$TEXT"
+return $?
+}
+
+copy_cmd() {
+#===  FUNCTION  ================================================================
+#          NAME: copy_cmd()  
+#   DESCRIPTION: Function to copy a directory and provide the output needed
+#                for zenity --progress
+#           USE: copy_cmd SOURCE DESINATION | zenity --progress --title "TEXT"
+#===============================================================================
+echo "# Gathering info ..."
+SOURCE="$1"
+DEST="$2"
+tmp1=$(mktemp)
+tmp2=$(mktemp)
+
+
+COUNT="$(ls -R $SOURCE/ | wc -l)"
+
+## Small script in a subshell
+$(cp -avr $SOURCE/* $DEST/. >$tmp2 ; [ "$?" = "0" ] && echo "###COMPLETE### 0" >$tmp2 || echo "###COMPLETE### 1" >$tmp2 )  &
+CP_PID=$!
+
+FINISHED=0
+LAST_COMP=0
+while [ "$FINISHED" = 0 ]; do
+  PROC=$(cat $tmp2 |wc -l)
+  COMP=$[ $PROC * 100 / $COUNT ]
+  if [ -n "$(tail -n 1 $tmp2 | grep "###COMPLETE###" )"  ]; then
+     echo 100
+     CP_STAT="$(tail -n 1 $tmp2 | grep "###COMPLETE###" |awk '{print $2}' )"
+     FINISHED=1
+  else
+     # Progress from 0-99%. Once 99% is reached print no more data until 
+     # the completion tag is read from tail. See the true condition above
+     [ $COMP -ge 99 ] && COMP=99
+     if [ "$COMP" != "$LAST_COMP" ]; then
+       echo "$COMP"
+       echo "# Copying files: "$COMP"%"
+       LAST_COMP="$COMP"
+     fi
+  fi
+  PROC=""
+  COMP=""
+  sleep 0.5
+done
+
+kill -9 $CP_PID >/dev/null 2>&1
+rm -f $tmp1
+rm -f $tmp2
+
+return $CP_STAT
+}
+
+
+make_selfextract() {
+#===  FUNCTION  ================================================================
+#          NAME: make_selfextract() 
+#   DESCRIPTION: Function create a self extracting installer from the contents 
+#                of TMPBUILD
+#           USE: make_selfextract PAYLOAD OUTPUT_FILE
+#===============================================================================
+PAYLOAD="$1"
+FILENAME="$2"
+cd "$PAYLOAD" 
+echo "# Compressing data. Please wait .."
+tar vfzc ../payload.tar.gz ./*  
+TAR_STAT=$?
+[ "$TAR_STAT" != 0 ] && return 200
+
+# Could be dealing with large amounts of space..  Lets free what we can
+cd .. 
+rm -rfd ./payload
+
+echo "# Creating self installing bottle.. "
+cat decompress payload.tar.gz > selfextract.bin 
+BOTTLE_STAT=$?
+[ "$BOTTLE_STAT" != 0 ] && return 201
+
+
+echo "# Saving bottle to $FILENAME"
+chmod +x selfextract.bin
+mv selfextract.bin "$FILENAME"
+OUTPUT_STAT=$?
+[ "$OUTPUT_STAT" != 0 ] && return 202
+
+return 0
+}
+
+do_cleanup() {
+##  I myself am not even sure now why I have 2 tmps
+rm -rfd "$TMPWORKING"
+rm -rfd "$TMPBUILD"
+rm -rfd ~/.adega-installer.tmp/
+}
+
+bottle_prefix() {
+SIZE_WINE_PREFIX=$(du "$PREFIX" |tail -n 1 |awk '{print $1}')
+WINE_SIZE=$(du "$CELLAR/WineVersions/$WINEVERSION" |tail -n 1 |awk '{print $1}')
+TOTAL_REQZ="$[ $[ $[ $WINE_SIZE + $SIZE_WINE_PREFIX ] * 4 ] / 1024 ]"
+MSG1="We will now build a self exacting installer for this prefix."
+MSG2="Please \nnote that this does not always work with all programs. Also"
+MSG3="\nThe build process can consume large amounts of space in temp files. As"
+MSG4="much as 4 times the size of this prefix could be \nrequired. \n\n"
+MSG5="Estimated space required: ${TOTAL_REQZ}MB \n\n"
+MSG6="Do you wish to continue?"
+MSG="$MSG1 $MSG2 $MSG3 $MSG4 $MSG5 $MSG6"
+zenity --question --text="$MSG" ANSW="" || ANSW=NO
+[ -n "$ANSW" ] && return 0
+
+CHK_LAUNCHERS="$(ls $HOME/.local/share/applications/adega-$(basename $PREFIX)-*.desktop)"
+if [ -z "$CHK_LAUNCHERS" ]; then
+  MSG="It seems no launchers have been made for this prefix.  Please make some launchers and try again"
+  zenity --info --text="$MSG"
+  return 1
+fi
+
+### Setup temp space
+mkdir -p ~/.adega-installer.tmp/
+TMPWORKING=$(mktemp -d ~/.adega-installer.tmp/adega-installer.XXXXXX)
+TMPBUILD=$(mktemp -d ~/.adega-installer.tmp/adega-installer.XXXXXX)
+mkdir -p "$TMPWORKING/icon-temp/"
+
+# Trap exit signals for auto cleanup
+trap "{ do_cleanup ; exit 0; }" EXIT
+
+MSG="Please enter the name of the application you are bottling."
+TITLE="$(zenity  --title "Enter title" --entry --text "$MSG")"
+if [ -z "$TITLE" ]; then
+  ERROR=105
+  MSG="Error: Need a full title for this application bottle. Aborting.."
+  zenity  --error --title "Alert"  --text "$MSG"
+  exit $ERROR
+fi
+
+cd ~
+MSG="Select location to save your compressed bottle."
+WINE_BOTTLE_OUTPUT="$(zenity  --file-selection --directory  --title "$MSG")"
+if [ -z "$WINE_BOTTLE_OUTPUT" ]; then
+  ERROR=107
+  MSG="Error: Need a location to save your compressed bottle. Aborting.."
+  zenity  --error --title "Alert"  --text "$MSG"
+  exit $ERROR
+else
+  MSG="Will save compressed bottle to: \n $WINE_BOTTLE_OUTPUT \n \n Do you wish to continue?"
+  zenity --question --title "$INSTALL_TITLE" --text="$MSG" && OUTCHK=OK || OUTCHK=Abort
+  if [ "$OUTCHK" != "OK" ]; then
+     exit 99
+  fi
+  touch $WINE_BOTTLE_OUTPUT/.adega-installer-rwtest
+  if [ ! -f "$WINE_BOTTLE_OUTPUT/.adega-installer-rwtest" ]; then
+    ERROR=106
+    MSG="Error: Need write access to save your application bottle. Aborting.."
+    zenity  --error --title "Alert"  --text="$MSG"
+    rm -f $WINE_BOTTLE_OUTPUT/.adega-installer-rwtest
+    exit $ERROR   
+  fi
+  rm -f $WINE_BOTTLE_OUTPUT/.adega-installer-rwtest
+fi
+
+cd ~
+WINE_BOTTLE_PREFIX="$PREFIX"
+
+#####  Import launchers
+mkdir -p $TMPBUILD/payload/data/meta/
+FILE_NAME="adega-$(basename $PREFIX)"
+cp $HOME/.local/share/applications/${FILE_NAME}-* $TMPBUILD/payload/data/meta/. 
+cp $HOME/.local/share/icons/adega/${FILE_NAME}-*  $TMPBUILD/payload/data/meta/.
+
+sed -i "{s|$CELLAR|@@INSTALL_PATH@@|g}" $TMPBUILD/payload/data/meta/*.desktop
+sed -i "{s|$HOME|@@HOME@@|g}" $TMPBUILD/payload/data/meta/*.desktop
+
+## Pre and Post install scripts
+TMP_SCRIPT=$(mktemp)
+echo '#!/bin/bash' >$TMP_SCRIPT
+echo '# Pre/Post install script template.  Any amount of code can' >>$TMP_SCRIPT
+echo '# be placed here to be executed before or after the install' >>$TMP_SCRIPT
+echo '# Process. The following variables are exported to the shell' >>$TMP_SCRIPT
+echo '# and may be used in your script:' >>$TMP_SCRIPT
+echo '# $INSTALL_PATH   $INSTALL_TITLE   $ADEGA_INSTALLER_TMP ' >>$TMP_SCRIPT
+echo -e "\n\n\n\n\n\n# By default this script does nothing.\nexit 0" >>$TMP_SCRIPT
+TXT1="Adega installer: pre-install script"
+TXT2="Do you need to specify an extra script to be run BEFORE the install starts?"
+zenity --question --title="$TXT1" --text="$TXT2" && PRE=1 || PRE=""
+if [ -n "$PRE" ]; then
+  zenity --text-info --editable --filename=$TMP_SCRIPT >$TMPBUILD/payload/pre_install.sh
+else
+  cat $TMP_SCRIPT >$TMPBUILD/payload/pre_install.sh
+fi
+TXT1="Adega installer: post-install script"
+TXT2="Do you need to specify an extra script to be run AFTER the install completes?"
+zenity --question --title="$TXT1" --text="$TXT2" && POST=1 || POST=""
+if [ -n "$POST" ]; then
+  zenity --text-info --editable --filename=$TMP_SCRIPT >$TMPBUILD/payload/data/post_install.sh
+else
+  cat $TMP_SCRIPT >$TMPBUILD/payload/data/post_install.sh
+fi
+rm -f $TMP_SCRIPT
+
+#-----------------------------------
+#   END Inputs and Var defines
+#-----------------------------------
+
+## Copy WineVersion to bottle
+mkdir -p "$TMPBUILD/payload/data/WineVersions/$WINEVERSION"
+do_copy "$CELLAR/WineVersions/$WINEVERSION" "$TMPBUILD/payload/data/WineVersions/$WINEVERSION/." "Copying Wine "$WINEVERSION" to bottle.."
+
+## Copy WINEPREFIX to bottle
+mkdir -p "$TMPBUILD/payload/data/$(basename $PREFIX)/"
+do_copy "$PREFIX" "$TMPBUILD/payload/data/$(basename $PREFIX)/." "Copying $(basename $PREFIX) to bottle.."
+
+cp $ADEGA_SCRIPT "$TMPBUILD/payload/data/."
+chmod -x "$TMPBUILD/payload/data/adega"
+
+# Prepare to build the self extractor
+cd "$TMPBUILD"
+
+# EMBED: decompress script
+cat <<'DECOMPRESS_EOF' >"$TMPBUILD/decompress"
+#!/bin/bash
+echo "Adega Self Extracting Installer"
+echo ""
+
+######################################
+## This block written by the builder #
+######################################
+TITLE="@@TITLE@@"
+######################################
+
+
+INSTALL_TITLE="$TITLE"
+CDIR=$(pwd)
+mkdir -p ~/.adega-installer.tmp/
+ADEGA_INSTALLER_TMP=$(mktemp -d ~/.adega-installer.tmp/selfextract.XXXXXX)
+# Trap exit signals for auto cleanup
+trap "{ do_cleanup }" EXIT
+
+do_cleanup() {
+
+rm -rfd ~/.adega-installer.tmp/
+}
+untar_data() {
+#===  FUNCTION  ================================================================
+#          NAME: untar_data()  
+#   DESCRIPTION: Function decompress the data on the tail of this script
+#===============================================================================
+
+ARCHIVE=$(awk '/^__ARCHIVE_BELOW__/ {print NR + 1; exit 0; }' $0)
+tail -n+$ARCHIVE $0 | tar xzv -C $ADEGA_INSTALLER_TMP
+}
+
+## Get some info from the user
+zenity --question --title "$INSTALL_TITLE" --text "Welcome! \n \n Will install: \n $INSTALL_TITLE\n \n Do you wish to continue?" && INSTALL=OK || INSTALL=Abort
+if [ "$INSTALL" != "OK" ]; then
+  exit 99
+fi
+cd ~
+INSTALL_PATH=$(zenity  --file-selection --directory  --title "Select install path.") && PATH_ERROR=0 || PATH_ERROR=1
+if [ "$PATH_ERROR" = "0" ]; then
+  if [ -z "$INSTALL_PATH" ]; then
+    zenity  --error --title "Alert"  --text "Must choose a path to install $INSTALL_TITLE. Aborting ..."
+    exit 98
+  fi
+else
+  zenity  --error --title "Alert"  --text "Error:  Cannot continue. Please check the install path and try again."
+  exit 97
+fi
+
+echo "Creating temp files ..."
+cd "$CDIR"
+untar_data | zenity --progress --pulsate --auto-close --text "Creating temp files. Please wait.."
+
+CDIR=$(pwd)
+cd $ADEGA_INSTALLER_TMP
+chmod +x ./installer
+trap "" "EXIT"
+export INSTALL_TITLE="$TITLE" INSTALL_PATH="$INSTALL_PATH" ADEGA_INSTALLER_TMP="$ADEGA_INSTALLER_TMP"
+export TITLE="$TITLE"
+
+# Pre install script
+chmod +x ./pre_install.sh
+./pre_install.sh
+rm -f ./pre_install.sh
+
+./installer "$ADEGA_INSTALLER_TMP" "$INSTALL_PATH"
+export TITLE="" INSTALL_PATH="" INSTALL_TITLE="$TITLE" ADEGA_INSTALLER_TMP=""
+
+cd $CDIR
+echo "Removing temp files ..."
+rm -rf $ADEGA_INSTALLER_TMP | zenity --progress --pulsate --auto-close --text "Removing temp files ..."
+
+do_cleanup
+exit 0
+
+__ARCHIVE_BELOW__
+DECOMPRESS_EOF
+
+
+# EMBED: installer script
+cat <<'INSTALLER_EOF' > $TMPBUILD/payload/installer
+#!/bin/bash
+set -x
+echo "Running Installer"
+
+ADEGA_INSTALLER_TMP="$1"
+INSTALL_PATH="$2"
+
+
+INSTALL_TITLE="$TITLE"
+
+do_copy(){
+SOURCE="$1"
+DEST="$2"
+TEXT="$3"
+
+copy_cmd "$SOURCE" "$DEST" | zenity --progress --auto-close --auto-kill --title "$TEXT"
+return $?
+}
+
+copy_cmd() {
+echo "# Gathering info ..."
+SOURCE="$1"
+DEST="$2"
+tmp1=$(mktemp)
+tmp2=$(mktemp)
+
+
+COUNT="$(ls -R -l $SOURCE/ | wc -l)"
+
+## Small script in a subshell
+$(cp -avr --no-preserve=ownership $SOURCE/* $DEST/. >$tmp2 ; [ "$?" = "0" ] && echo "###COMPLETE### 0" >$tmp2 || echo "###COMPLETE### 1" >$tmp2 )  &
+CP_PID=$!
+
+FINISHED=0
+LAST_COMP=0
+while [ "$FINISHED" = 0 ]; do
+  PROC=$(cat $tmp2 |wc -l)
+  COMP=$[ $PROC * 100 / $COUNT ]
+  if [ -n "$(tail -n 1 $tmp2 | grep "###COMPLETE###" )"  ]; then
+     echo 100
+     CP_STAT="$(tail -n 1 $tmp2 | grep "###COMPLETE###" |awk '{print $2}' )"
+     FINISHED=1
+  else
+     if [ "$COMP" != "$LAST_COMP" ]; then
+       echo "$COMP"
+       echo "# Copying files: "$COMP"%"
+       LAST_COMP="$COMP"
+     fi
+  fi
+  PROC=""
+  COMP=""
+  sleep 0.5
+done
+
+kill -9 $CP_PID >/dev/null 2>&1
+rm -f $tmp1
+rm -f $tmp2
+
+if [ "$CP_STAT" = "0" ]; then
+  echo "# Operation Complete!"
+else
+  echo "# Operation Failed!"
+fi
+
+return $CP_STAT
+}
+set -x
+###### Start main install process
+####
+##
+cd "$INSTALL_PATH"
+do_copy $ADEGA_INSTALLER_TMP/data . "Installing to $INSTALL_PATH"
+
+cd ./meta
+sed -i "{s|@@HOME@@|$HOME|g}" *.desktop
+sed -i "{s|@@INSTALL_PATH@@|$INSTALL_PATH|g}" *.desktop
+sed -i "{s|Exec=adega|Exec=$INSTALL_PATH/adega --cellar $INSTALL_PATH|}" *.desktop
+
+mkdir -p $HOME/.local/share/applications/
+mkdir -p $HOME/.local/share/icons/adega/
+cp *.desktop $HOME/.local/share/applications/.
+cp *.png $HOME/.local/share/icons/adega/.
+
+cd ..
+mv meta .meta
+chmod +x adega
+
+# Post install script
+chmod +x ./post_install.sh
+./post_install.sh
+rm -f ./post_install.sh
+
+zenity --info --title "Installation Complete!"  --text "Installation of: \n \n $INSTALL_TITLE \n \n Is now complete!"
+INSTALLER_EOF
+
+sed -i "{s|@@TITLE@@|$TITLE|}" "$TMPBUILD/decompress"
+
+### The Bottle is ready to be built. Ask what to do. We can save it for further
+##  modification or build a self extracting installer
+make_selfextract "$TMPBUILD/payload" "$WINE_BOTTLE_OUTPUT/$TITLE-installer.bin" | zenity --progress --pulsate --auto-kill --auto-close --title "Building bottle installer .."
+STAT=$?
+if [ "$STAT" = "0" ]; then
+  MSG="Self extracting bottle built successfully and saved to: \n "$WINE_BOTTLE_OUTPUT/$TITLE-installer.bin""
+  zenity --info --title "Operation Complete!"  --text="$MSG"
+else
+  MSG="ERROR$STAT : An error occured while building the bottle"
+  zenity  --error --title "Alert"  --text "$MSG"
+  exit $STAT
+fi
+
+return 0
+}
+
+########################################### END Bottles and related #################################################
+#####################################################################################################################
+
+#####################################################  Menu Functions ###############################################
+action_menu() {
+WIDTH=800
+HGHT=600
+ACTION="$(zenity --list  --width=$WIDTH --height=$HGHT --title="Adega" --text "Please choose an operation" \
+--column "Command" \
+"1. Choose an existing wine prefix" \
+"2. Create and configure a new wine prefix" \
+"3. Remove a wine prefix" \
+"4. Install a new copy of wine" \
+"5. Browse WINE AppDB" \
+"6. Quit" \
+| sed 's/[.].*$//'
+)"
+case "$ACTION" in
+              1)
+               prefix_chooser
+               main_menu "action_menu"
+               ;;
+              2)
+               create_prefix
+               action_menu
+               ;;
+              3)
+               prefix_chooser
+               if [ -d "$PREFIX" ]; then 
+                 MSG="Are you sure you want to remove the following prefix?: \n\n $(basename $PREFIX)"
+                 zenity --question --title="Adega: prefix remover" --text="$MSG" && REMOVE=1 || REMOVE=""
+                 if [ -n "$REMOVE" ]; then
+                   META_FILES="adega-$(basename $PREFIX)"
+                   rm -rfd "$PREFIX"
+                   rm -f $HOME/.local/share/applications/${META_FILES}-*
+                   rm -f $HOME/.local/share/icons/adega/${META_FILES}-*
+                 fi 
+               fi
+               action_menu
+               ;;
+              4)
+               wine_install
+               action_menu
+               ;;
+              5)
+               x-www-browser "http://appdb.winehq.org/objectManager.php?sClass=application" &
+               action_menu
+               ;;
+              6)
+               exit 0
+               ;;
+
+esac
+}
+
+
+main_menu() {
+END_CMD="$1"
+WIDTH=800
+HGHT=600
+MSG="Please choose an action for the selected prefix."
+COMMAND_MODE="$(zenity --list  --width=$WIDTH --height=$HGHT --title="Adega: $(basename $PREFIX)" --text="$MSG" \
+--column "Command" \
+"1. Run a program" \
+"2. Kill all running programs" \
+"3. Adega toolbox" \
+"4. Back" \
+| sed 's/[.].*$//'
+)"
+
+case "$COMMAND_MODE" in
+             1)
+              run_menu "main_menu"
+              ;;
+             2)
+              reset_prefix
+              run_menu "$END_CMD"
+              ;;
+             3)
+              winetools_menu "main_menu"
+              ;;
+
+             4)
+              $END_CMD
+              ;;
+             *)
+              exit 1
+              ;;
+esac
+
+
+}
+
+run_menu() {
+END_CMD="$1"
+WIDTH=800
+HGHT=600
+MSG="Please choose an operation"
+RUNMODE="$(zenity --list --width=$WIDTH --height=$HGHT --title="Adega: $(basename $PREFIX)" --text="$MSG" \
+--column "Command" \
+"1. Run a installed program" \
+"2. Choose an EXE to Run" \
+"3. Back" \
+| sed 's/[.].*$//'
+)"
+case "$RUNMODE" in
+                 1)
+                   run_prefix
+                   ;;
+                 2)
+                   wine_exe_chooser
+                   run_prefix "$RUNLNK"
+                   ;;
+
+                 3)
+                   $END_CMD
+                   ;;
+esac
+}
+
+winetools_menu() {
+END_CMD="$1"
+WIDTH=800
+HGHT=600
+MSG="Please choose a tool"
+TOOLSMODE="$(zenity --list  --width=$WIDTH --height=$HGHT --title="Adega: $(basename $PREFIX)" --text="$MSG" \
+--column "Command" \
+"1. Set adega prefix options" \
+"2. Rebuild Installed program list" \
+"3. Make a launcher for an installed program" \
+"4. Remove Temp and Uninstaller files" \
+"5. Make a installer for this prefix" \
+"6. Wine Registry" \
+"7. winecfg" \
+"8. winetricks" \
+"9. wisotool" \
+"10. Back" \
+| sed 's/[.].*$//'
+)"
+case "$TOOLSMODE" in
+                 1)
+                  prefix_options "winetools_menu"
+                  ;;
+                 2)
+                  build_program_list
+                  winetools_menu "$END_CMD"
+                  ;;
+                 3)
+                  make_launcher
+                  winetools_menu "$END_CMD"
+                  ;;
+                 4)
+                   prefix_cleaner
+                   winetools_menu "$END_CMD"
+                  ;;
+
+                 5)
+                  bottle_prefix
+                  winetools_menu "$END_CMD"
+                  ;;
+                 6)
+                  registry_menu "winetools_menu"
+                  ;;
+
+                 7)
+                  exec_winecfg
+                  winetools_menu "$END_CMD"
+                  ;;
+                 8)
+                  exec_winetricks
+                  winetools_menu "$END_CMD"
+                  ;;
+                 9)
+                  exec_wisotool
+                  winetools_menu "$END_CMD"
+                  ;;
+                 10)
+                  [ -z "$END_CMD" ] & END_CMD="main_menu"
+                  $END_CMD
+                  ;;
+
+esac
+}
+
+registry_menu() {
+END_CMD="$1"
+WIDTH=800
+HGHT=600
+MSG="Please choose an operation"
+REGTWEAKS="$(zenity --list --width=$WIDTH --height=$HGHT --title="Adega: $(basename $PREFIX)" --text="$MSG" \
+--column "Command" \
+"1. Set video memory size" \
+"2. Run Regedit" \
+"3. Back" \
+| sed 's/[.].*$//'
+)"
+
+case "$REGTWEAKS" in 
+            1)
+             wine_set_vidmem
+             registry_menu "$END_CMD"
+             ;;
+            2)
+             wine_env
+             WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" "C:\Windows\regedit.exe" 2>&1 >/dev/null
+             winetools_menu "$END_CMD"
+             ;;
+            3)
+             $END_CMD
+             ;;
+esac
+}
+
+prefix_options() {
+END_CMD="$1"
+WIDTH=800
+HGHT=600
+TITLE="Adega: $($basename $prefix)"
+MSG="Please set the wine version to use with this prefix"
+zenity --info --title="$TITLE options" --text="$MSG"
+wine_chooser
+
+MSG="Enter any DLL overrides for wine separted with a comma (Blank for none)"
+WINEDLLOVERRIDES="$(zenity --entry --title="$TITLE options" --text="$MSG" \
+--entry-text="$WINEDLLOVERRIDES" \
+)"
+
+PROGRAM_CHOOSER_OPTIONS="$(zenity --list --checklist --title="Select options" \
+--separator="\n" --title="$TITLE options" --text="$MSG" --column " " \
+--column "Options" TRUE "Show LNK Files" FALSE "Show EXE Files"
+)"
+echo $PROGRAM_CHOOSER_OPTIONS |grep "LNK" >/dev/null && SHOW_LNKS=1 || SHOW_LNKS=""
+echo $PROGRAM_CHOOSER_OPTIONS |grep "EXE" >/dev/null && SHOW_EXES=1 || SHOW_EXES=""
+
+## Save config
+MSG="Would you like to save these options to the following prefix?: \n\n $(basename $PREFIX)"
+zenity --question --title="$TITLE options" --text "$MSG" && SAVE=1 || SAVE=""
+if [ -n "$SAVE" ]; then
+  echo "WINEVERSION=$WINEVERSION" >$PREFIX/adega-prefix.cfg
+  echo "WINEDLLOVERRIDES=$WINEDLLOVERRIDES" >>$PREFIX/adega-prefix.cfg
+  echo "SHOW_LNKS=$SHOW_LNKS" >>$PREFIX/adega-prefix.cfg
+  [ -n "$SHOW_EXES" ] && echo "SHOW_EXES=$SHOW_EXES" >>$PREFIX/adega-prefix.cfg
+fi
+
+$END_CMD
+}
+#########################################  END Menus ###########################################################
+
+######################################## END Functions ##########################################################
+#################################################################################################################
+############# Init ###################
+## Need to strictly define the location of this script
+## and hopfully this will work consistantly.  Trying to mimick PHP realpath()
+ADEGA_SCRIPT="$(readlink -f $(type -a "$0" |awk '{print $3}'|head -n1))"
+adega_updater
+############# END Init ################
+
+while [ "$1" ]; do
+  case "$1" in
+            --cellar)
+                    CLI=1
+                    CELLAR=$2
+                    shift 2
+                    ;;
+            --prefix)
+                    CLI=1
+                    if [ -d $CELLAR/$2 ]; then
+                      PREFIX=$CELLAR/$2
+                    else
+                      echo "Invalid prefix"
+                      exit 1
+                    fi
+                    shift 2
+                    ;;
+            --env)
+                    # This option must be last
+                    shift 1
+                    ENV_CMD="${@}"
+                    if [ -n "$PREFIX" ]; then
+                      # setup wine
+                      wine_env
+                      eval WINEPREFIX=$PREFIX "${@}"
+                      exit $?
+                    else
+                      echo "Error: no prefix given"
+                      exit 1
+                    fi
+                    break
+                    ;;
+
+            --run)
+                    # This option must be last
+                    RUNMODE=1
+                    RUNLNK="$2"
+                    if [ -n "$RUNLNK" ]; then
+                      # Store programs args for later
+                      shift 2
+                      PROGRAM_ARGS="${@}"
+                    fi
+                    break
+                    ;;
+            --update)
+                    UPDATE_NOW=1
+                    adega_updater
+                    exit 0
+                    break
+                    ;;
+
+            --help-all)
+                    EXAMPLES=1
+                    do_help
+                    exit 0
+                    break
+                    ;;
+  esac
+done
+
+if [ -n "$CLI" ]; then
+  if [ -z "$RUNLNK" ]; then
+   if [ -n "$RUNMODE" ]; then
+     run_prefix
+   else
+     main_menu
+   fi
+  else
+    run_prefix "$RUNLNK"
+  fi
+else
+  action_menu
+fi

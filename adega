@@ -327,7 +327,7 @@ if [ -f $ADEGA_SCRIPT ]; then
       if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
         # An update is available
         MSG="An updated version of adega is available. Would you like to update the local copy?"
-        do_dialog ask "Adega: adega updater" $MSG && DO_UPDATE=1 || DO_UPDATE=""
+        do_dialog ask "Adega: adega updater" "$MSG" && DO_UPDATE=1 || DO_UPDATE=""
         if [ -n "$DO_UPDATE" ]; then
           # Proceed with update
           cp $ADEGA_SCRIPT ${ADEGA_SCRIPT}-backup

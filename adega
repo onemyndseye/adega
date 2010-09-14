@@ -615,7 +615,7 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/wisotool.sh
 
 create_prefix() {
 MSG="Enter a directory name for this prefix:"
-NAME="$(do_dialog "Adega: create prefix" "$MSG")"
+NAME="$(do_dialog input "Adega: create prefix" "$MSG")"
 PREFIX="${CELLAR}/${NAME}"
 mkdir -p "$PREFIX"
 

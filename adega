@@ -1189,6 +1189,11 @@ while [ "$1" ]; do
                     exit 0
                     break
                     ;;
+            --help)
+                    do_help
+                    exit 0
+                    break
+                    ;;
 
             --help-all)
                     EXAMPLES=1

@@ -5,7 +5,7 @@ Adega :: Derrived from the Portugese word for wine estate or wine cellar, Adega 
 
 Usage: adega   <options>
         --cellar  <Path>            :: Specify a cellar other than the default
-                                       ($CELLAR)
+
 
         --prefix  <Prefix>          :: Select a prefix by its short name (basename)
 

@@ -14,6 +14,23 @@
 ##
 ##        AUTHOR:  Justin Whittington (onemyndseye@yahoo.com)
 ##         NOTES:  No Oracle, it DOES NOT depend on wine :P
+##
+##       LICENSE:
+##                This program is free software; you can redistribute it and/or modify
+##                it under the terms of the GNU General Public License as published by
+##                the Free Software Foundation; either version 2 of the License, or
+##                (at your option) any later version.
+##
+##                This program is distributed in the hope that it will be useful,
+##                but WITHOUT ANY WARRANTY; without even the implied warranty of
+##                MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+##                GNU General Public License for more details.
+##
+##                You should have received a copy of the GNU General Public License
+##                along with this program; if not, write to the Free Software
+##                Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
+##                MA 02110-1301, USA.
+##
 ###################################################################################
 
 ###################################### Variables and Settings ########################################
@@ -38,13 +55,13 @@ ADEGA_AGE=7
 # menus
 WINEDLLOVERRIDES=winemenubuilder.exe=d
 
-# Filter out Lnks/exe's that match these patterns
-IGNORE_PATTERNS="application data|iexplore|temp|installshield|safe mode|uninstall|http:|.url|.htm|.html|.pdf|.txt|.doc"
+# Filter out Lnks/exe's that match these patterns.
+IGNORE_WORDS="application data|iexplore|temp|installshield|safe mode|uninstall|"
+IGNORE_URLS="http:|file:|"
+IGNORE_EXTS=".url|.htm|.html|.pdf|.txt|.doc"
 
-# File masks for the program chooser
-FILE_MASKS="*.exe *.msi"
 
-# By default we only want to show LNKs. Uncomment  the other
+# By default we only want to show LNKs. Uncomment the other
 # to make default.  If no programs are found by scanning by the
 # configured settings a full search is performed.
 SHOW_LNKS=1
@@ -118,6 +135,9 @@ exit 0
 }
 
 do_dialog() {
+## Function to detect the presence of zenity/kdialog and translate
+## between the two
+##
 
 # Decide which dialog app to use
 KDIALOG=$(which kdialog)
@@ -139,8 +159,8 @@ else
   if [ -n "$KDIALOG" -a "$WINMANAGE" = "kwin" ]; then
     DIALOG_MODE=kdialog
   else
-    if [ -n "$ZENITY" ]; then 
-      DIALOG_MODE=zenity 
+    if [ -n "$ZENITY" ]; then
+      DIALOG_MODE=zenity
     else
       echo "Unable to detect a dialog method. This script requires either"
       echo "zenity or kdialog to be installed"
@@ -154,7 +174,7 @@ case "$1" in
           # msgbox/info
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
-            zenity --info --title="$1" --text="$2" 
+            zenity --info --title="$1" --text="$2"
             return $?
           else
             kdialog --name "Adega" --title "$1" --msgbox "$2" 2>/dev/null
@@ -178,7 +198,7 @@ case "$1" in
            # Text input
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
-            zenity --title="$1" --entry --text="$2" --entry-text="$3" 
+            zenity --title="$1" --entry --text="$2" --entry-text="$3"
             return $?
           else
             kdialog --name "Adega" --title "$1" --inputbox "$2" "$3" 2>/dev/null
@@ -187,7 +207,7 @@ case "$1" in
           ;;
 
         ask)
-           # Question 
+           # Question
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             zenity --title="$1" --question --text="$2"
@@ -240,12 +260,12 @@ case "$1" in
                items+=("$num")
                items+=("$i")
             done
-            ARGS="--column=1 --column=2 --column=3 --hide-column=2 --hide-header" 
+            ARGS="--column=1 --column=2 --column=3 --hide-column=2 --hide-header"
             (zenity --title="$1" --width=$2 --height=$3 --list --checklist --separator=" "  \
              --column=1 --column=2 --column=3 --hide-column=2 --hide-header --text="$4" "${items[@]}")
             unset items
             return $?
-          else 
+          else
             ITEM_STRING="$5"
             unset items
             num=0
@@ -267,7 +287,7 @@ case "$1" in
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             ARGS="--min-value=$3 --max-value=$4 --step=$5"
-            zenity --scale --title="$1" --text="$2" $ARGS 
+            zenity --scale --title="$1" --text="$2" $ARGS
             return $?
           else
             kdialog --name "Adega" --title "$1" --slider "$2" $3 $4 $5 2>/dev/null
@@ -286,13 +306,50 @@ case "$1" in
             return $?
           fi
           ;;
-     dlprogress)
-          # Set env for do_download() progress bar
+     progress)
           shift 1
-          echo $DIALOG_MODE
+          TITLE="$1"
+          TEXT="$2"
+          COMPL_TOTAL="$3"
+          COMPL_CMD="${4}"
+          PERCT=0
+          ( ## Forked subshell ##
+              if [ "$DIALOG_MODE" = "zenity" ]; then
+                ARGS="--auto-kill --auto-close"
+                # Child Process for zenity
+                (
+                 while [ $PERCT != 100 ]; do
+                   COMPL_RESULT="$(eval ${COMPL_CMD})"
+                   # Ensure we only get numbers
+                   COMPL=$(echo $COMPL_RESULT 2>/dev/null | sed "s/[^0-9]//g")
+                   [ -z "$COMPL" ] && COMPL=0
+                   PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
+                   echo "$PERCT"
+                   sleep 1
+                 done
+                ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
+              else
+                dbusRef=$(kdialog --progressbar "$TEXT" 100)
+                while [ $PERCT != 100 ]; do
+                   COMPL_RESULT="$(eval ${COMPL_CMD})"
+                   # Ensure we only get numbers
+                   COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
+                   [ -z "$COMPL" ] && COMPL=0
+                   PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
+                   # check if dbus object exists
+                   qdbus $dbusRef 1>/dev/null 2>&1
+                   if [ "$?" -ne "0" ]; then
+                     # dbus Object does not exist (anymore)
+                     exit 0
+                   fi
+                   qdbus $dbusRef Set ""  "value" $PERCT
+                   sleep 1
+                done
+                qdbus $dbusRef close
+              fi
+          )
           return 0
           ;;
-
 esac
 }
 
@@ -307,9 +364,6 @@ rm -rfd ~/.adega-installer.tmp/
 adega_updater() {
 PID="$1"
 URL="http://github.com/onemyndseye/adega/raw/master/adega"
-
-# Update from cmdline
-[ -z "$ADEGA_AGE" ] && ADEGA_AGE=1
 
 if [ -f $ADEGA_SCRIPT ]; then
   # Check the age
@@ -345,12 +399,6 @@ if [ -f $ADEGA_SCRIPT ]; then
 fi
 }
 
-prefix_cleaner() {
-rm -rfd ${PREFIX}/drive_c/users/onemyndseye/Temp/*
-rm -rfd ${PREFIX}/drive_c/windows/temp/*
-rm -rfd "${PREFIX}/drive_c/Program Files/InstallShield Installation Information/"
-
-}
 make_icon() {
 ## This ripped pretty much straight from gnome-exe-thumbnailer
 TEMPFILE1=$(mktemp)
@@ -486,12 +534,12 @@ if [ -z "$WINEVERSION" ]; then
   fi
 fi
 
-WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION" 
-WINESERVER="$WINEVERPATH/usr/bin/wineserver" 
-WINELOADER="$WINEVERPATH/usr/bin/wine" 
-WINEDLLPATH="$WINEVERPATH/usr/lib/wine" 
+WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION"
+WINESERVER="$WINEVERPATH/usr/bin/wineserver"
+WINELOADER="$WINEVERPATH/usr/bin/wine"
+WINEDLLPATH="$WINEVERPATH/usr/lib/wine"
 LD_LIBRARY_PATH="$WINEVERPATH/usr/lib/wine/:$LD_LIBRARY_PATH"
-WINE_BIN="$WINEVERPATH/usr/bin/wine" 
+WINE_BIN="$WINEVERPATH/usr/bin/wine"
 PATH=$WINEVERPATH/usr/bin:$PATH
 }
 
@@ -515,7 +563,7 @@ else
 fi
 
 if [ -n "$PROG" ]; then
-  EXIT=0  
+  EXIT=0
   while [ $EXIT = "0" ]
   do
       TMP1=$(ps ax |grep -F "$PROG" |grep -v grep |awk '{print $1}')
@@ -613,36 +661,17 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/wisotool.sh
 }
 
 
-create_prefix() {
-MSG="Enter a directory name for this prefix:"
-NAME="$(do_dialog input "Adega: create prefix" "$MSG")"
-PREFIX="${CELLAR}/${NAME}"
-mkdir -p "$PREFIX"
-
-prefix_options "return"
-
-wine_env
-WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" null.exe 2>&1 >/dev/null
-
-MSG="Would you like to see the tools menu now"
-do_dialog ask "Adega: create prefix" "$MSG" && TOOLS=1 || TOOLS=""
-
-if [ -n "$TOOLS" ]; then
-  winetools_menu "return"
-fi
-
-}
-
 get_programs() {
 ## Function to list Programs in $PREFIX lnks first.
 
+IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
 if [ -n "$SHOW_LNKS" ]; then
   find $PREFIX -name "*.lnk" |egrep -i -v  "$IGNORE_PATTERNS"
 fi
 if [ -n "$SHOW_EXES" ]; then
   find $PREFIX -name "*.exe" -not -wholename "$PREFIX/drive_c/windows/*" -not \
                       -wholename "$PREFIX/drive_c/Program Files/Common Files/*" \
-                      |egrep -i -v  "$IGNORE_PATTERNS" 
+                      |egrep -i -v  "$IGNORE_PATTERNS"
 fi
 }
 
@@ -653,6 +682,7 @@ wine_env
 LIST=$PREFIX/adega-programs.list
 
 ### Build a EXE List
+IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
 TMP_LIST=$(mktemp)
 IFS=$'\n'
 for i in $(get_programs); do
@@ -670,8 +700,8 @@ for i in $(get_programs); do
      EXE="$(WINEPREFIX=$PREFIX winepath -w "$i")"
      NAME="$(echo $(basename $(WINEPREFIX=$PREFIX winepath -u "$EXE")) |sed '{s|.exe||;s|.EXE||}')"
      ## Check for dupes
-     CHK_DUPE="$(cat $TMP_LIST |grep -F "$(basename "$EXE")")" 
-     if [ -z "$CHK_DUPE" ]; then 
+     CHK_DUPE="$(cat $TMP_LIST |grep -F "$(basename "$EXE")")"
+     if [ -z "$CHK_DUPE" ]; then
        echo "$NAME ::: $EXE" >>$TMP_LIST
      fi
    fi
@@ -700,7 +730,101 @@ rm -f $TMP_LIST
 rm -f $TMP_MENU
 }
 
-############################################# Various Choosers #######################################################
+prefix_cleaner() {
+rm -rfd ${PREFIX}/drive_c/users/onemyndseye/Temp/*
+rm -rfd ${PREFIX}/drive_c/windows/temp/*
+rm -rfd "${PREFIX}/drive_c/Program Files/InstallShield Installation Information/"
+
+}
+
+prefix_backup() {
+
+NAME="$(basename "$PREFIX")"
+MSG1="We will not create a tar/gz backup of the following prefix: \n \n $NAME"
+MSG2="\n\nDo you wish to proceed?"
+do_dialog ask "Adega: $NAME - Prefix backup" "$MSG" && BACKUP=1 || BACKUP=""
+
+if [ -n "$BACKUP" ]; then
+  cd "$PREFIX"
+  FILE_COUNT="$(find . |wc -l)"
+
+  cd $CELLAR
+  tar -pczf ~/${NAME}.tar.gz ./${NAME}/
+fi
+
+}
+
+prefix_create() {
+MSG="Enter a directory name for this prefix:"
+NAME="$(do_dialog input "Adega: create prefix" "$MSG")"
+PREFIX="${CELLAR}/${NAME}"
+mkdir -p "$PREFIX"
+
+prefix_options "return"
+
+wine_env
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES wineboot --update 2>&1 >/dev/null
+
+MSG="Would you like to see the tools menu now"
+do_dialog ask "Adega: create prefix" "$MSG" && TOOLS=1 || TOOLS=""
+
+if [ -n "$TOOLS" ]; then
+  winetools_menu "return"
+fi
+}
+
+reset_prefix() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+wine_env
+WINEPREFIX=$PREFIX wineserver -k
+WINEPREFIX=$PREFIX wineboot
+
+}
+prefix_run() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+RUNLNK="$1"
+
+## Sanity check
+if [ ! -d "$PREFIX" ]; then
+  echo "$PREFIX is a invalid WINE prefix .."
+  exit 1
+fi
+
+## Set Wine env
+wine_env
+
+if [ -z "$RUNLNK" ]; then
+  program_chooser
+  EXE="$RUNLNK"
+else
+  EXE="$(WINEPREFIX=$PREFIX winepath -w "$RUNLNK")"
+fi
+
+if [ -n "$EXE" ]; then
+  EXT=${EXE##*.}
+  if [ "$EXT" = "lnk" ]; then
+    TARGET_EXE="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
+    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath -u "$TARGET_EXE")")"
+  else
+    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath "$EXE")")"
+  fi
+  LOG="${PREFIX}/last-session.log"
+  cd "${TARGET}"
+  echo "Will use the following prefix:  $PREFIX"
+  echo "Will log messages to $LOG .."
+  echo "Starting $EXE ..."
+  [ -n "$TARGET_EXE" ] && echo "Target EXE: $TARGET_EXE ..."
+  echo "CWD is: $(pwd) .."
+  exec_wine "$EXE" >$LOG 2>&1
+else
+  echo "An error has occured!! .."
+  exit 23
+fi
+}
+
+############################################# Various Choosers ########################################################
 wine_exe_chooser() {
 cd ~
 RUNLNK=$(do_dialog fselect)
@@ -720,6 +844,8 @@ PROGRAM="$(do_dialog menu 800 600 "$TITLE" "$TEXT" "$PROG_LIST")"
 RUNLNK="$(cat $LIST | sed -n "${PROGRAM}p" |sed '{s|::: |::: \n|}' |grep -v ":::")"
 LNK_NAME="$(cat $LIST | sed -n "${PROGRAM}p" | sed '{s| :::|\n :::|}'|grep -v ":::")"
 }
+
+
 
 prefix_chooser() {
 MSG="Select a WINE Prefix"
@@ -782,58 +908,6 @@ fi
 }
 ################################################# END Various Choosers ##############################################
 
-reset_prefix() {
-[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
-
-wine_env
-WINEPREFIX=$PREFIX wineserver -k
-WINEPREFIX=$PREFIX wineboot
-
-}
-run_prefix() {
-[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg || echo "NO SETTINGS"
-
-RUNLNK="$1"
-
-## Sanity check
-if [ ! -d "$PREFIX" ]; then
-  echo "$PREFIX is a invalid WINE prefix .."
-  exit 1
-fi
-
-## Set Wine env
-wine_env
-
-if [ -z "$RUNLNK" ]; then
-  program_chooser
-  EXE="$RUNLNK"
-else
-  EXE="$(WINEPREFIX=$PREFIX winepath -w "$RUNLNK")"
-fi
-
-if [ -n "$EXE" ]; then
-  EXT=${EXE##*.}
-  if [ "$EXT" = "lnk" ]; then
-    TARGET_EXE="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
-    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath -u "$TARGET_EXE")")"
-  else
-    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath "$EXE")")"
-  fi
-  LOG="${PREFIX}/last-session.log"
-  cd "${TARGET}"
-  echo "Will use the following prefix:  $PREFIX"
-  echo "Will log messages to $LOG .."
-  echo "Starting $EXE ..."
-  [ -n "$TARGET_EXE" ] && echo "Target EXE: $TARGET_EXE ..."
-  echo "CWD is: $(pwd) .."
-  exec_wine "$EXE" >$LOG 2>&1
-else
-  echo "An error has occured!! .."
-  exit 23
-fi
-}
-
-
 wine_install() {
 mkdir -p "${CELLAR}/WineVersions/tmp"
 cd "${CELLAR}/WineVersions/tmp"
@@ -844,7 +918,7 @@ MSG="Select wine versions to install"
 WINE_INSTALL_VERSIONS=$(do_dialog checks "Wine Installer" 800 600 "$MSG" "$LIST")
 if [ -n "$WINE_INSTALL_VERSIONS" ]; then
   for i in $WINE_INSTALL_VERSIONS; do
-    # Check to make sure its not already installed 
+    # Check to make sure its not already installed
     # First have to translate the tag number given by do_dialog into a
     # actual result.
     INSTALL_VERSION=$(echo $VERSIONS | sed '{s/ /\n/g}' |sed -n "${i}p")
@@ -855,11 +929,11 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
       WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
 
       # Download WINE
-      do_download "$WINE_URL" "Downloading WINE $INSTALL_VERSION" "${CELLAR}/WineVersions/tmp" 
+      do_download "$WINE_URL" "Downloading WINE $INSTALL_VERSION" "${CELLAR}/WineVersions/tmp"
       if [ "$?" != "0" ]; then
         # WINE download failed.
         do_dialog error "Alert" "Download of  WINE failed! Aborting..."
-        exit 300 
+        exit 300
       fi
       # Extract WINE
       tar -xvf $WINE_BOTTLE_FILE
@@ -884,49 +958,24 @@ do_download() {
 DOWNLOAD_URL="$1"
 TEXT="$2"
 DEST="$3"
+DL_CDIR=$(pwd)
+cd "$DEST"
 
 FILE=$(basename "$DOWNLOAD_URL")
 # get file size
 TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
 SIZE=$[ $TMP /  1024 ]
 
-DL_CDIR=$(pwd)
-cd "$DEST"
+CMD='du $FILE | cut -f1'
+do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" &
+DIALOG_WATCHER_PIDS=$!
 
-# Get Dialog mode
-DIALOG_MODE="$(do_dialog dlprogress)"
-if [ $DIALOG_MODE = "kdialog" ]; then
-   dbusRef=$(kdialog --progressbar "$TEXT" 100)
-   kdialog_watch_progress "$dbusRef" &
-   wget -q "$DOWNLOAD_URL"
-   WGET_STAT=$?
-   qdbus $dbusRef close
-else
-  SED_STRING="s/.* \([0-9]\+%\)\ \+\([0-9.]\+.\) \(.*\)/\1\n# Downloading at \2\/s, ETA \3/"
-  wget $DOWNLOAD_URL 2>&1 | sed -u "$SED_STRING" | zenity --progress --title="$TEXT" --auto-close --auto-kill
-  WGET_STAT=$?
-  kill -9 "$(ps ax |grep "wget" |grep "$DOWNLOAD_URL" |grep -v "grep" |awk '{print $1}')" 2>&1 >/dev/null
-fi
+wget -q "$DOWNLOAD_URL"
+WGET_STAT=$?
 
+kill -9 $DIALOG_WATCHER_PIDS
 cd "$DL_CDIR"
 return $WGET_STAT
-}
-
-kdialog_watch_progress() {
-dbusRef=$1
-while [ true ];  do
-    sleep 1
-    COMPL=$(du $FILE |awk '{print $1}')
-    PERCT=$[ $COMPL * 100 / $SIZE ]
-    # check if dbus object exists
-    qdbus $dbusRef 1>/dev/null 2>&1
-    if [ "$?" -ne "0" ]; then
-      # dbus Object does not exist (anymore)
-      kill -9 "$(ps ax |grep "wget" |grep "$DOWNLOAD_URL" |grep -v "grep" |awk '{print $1}')" 2>&1 >/dev/null
-      exit 0
-    fi
-    qdbus $dbusRef Set ""  "value" $PERCT
-done
 }
 
 #####################################################  Menu Functions ###############################################
@@ -943,12 +992,12 @@ case "$ACTION" in
                main_menu "action_menu"
                ;;
               2)
-               create_prefix
+               prefix_create
                action_menu
                ;;
               3)
                prefix_chooser
-               if [ -d "$PREFIX" ]; then 
+               if [ -d "$PREFIX" ]; then
                  MSG="Are you sure you want to remove the following prefix?: \n\n $(basename $PREFIX)"
                  do_dialog ask "Adega: prefix remover" "$MSG" && REMOVE=1 || REMOVE=""
                  if [ -n "$REMOVE" ]; then
@@ -956,7 +1005,7 @@ case "$ACTION" in
                    rm -rfd "$PREFIX"
                    rm -f $HOME/.local/share/applications/${META_FILES}-*
                    rm -f $HOME/.local/share/icons/adega/${META_FILES}-*
-                 fi 
+                 fi
                fi
                action_menu
                ;;
@@ -1015,11 +1064,11 @@ RUNMODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
 
 case "$RUNMODE" in
                  1)
-                   run_prefix
+                   prefix_run
                    ;;
                  2)
                    wine_exe_chooser
-                   run_prefix "$RUNLNK"
+                   prefix_run "$RUNLNK"
                    ;;
 
                  3)
@@ -1033,7 +1082,7 @@ END_CMD="$1"
 MSG="Please choose a tool"
 TITLE="Adega: $(basename $PREFIX)"
 MENU1="Set adega prefix options;Rebuild Installed program list;Make a launcher for an installed program;"
-MENU2="Remove Temp and Uninstaller files;Wine Registry;winecfg;"
+MENU2="Remove Temp and Uninstaller files;Backup and compress prefix;Wine Registry;winecfg;"
 MENU3="winetricks;wisotool;Back;"
 MENU_STRING="${MENU1}${MENU2}${MENU3}${MENU4}"
 TOOLSMODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
@@ -1056,22 +1105,27 @@ case "$TOOLSMODE" in
                   ;;
 
                  5)
-                  registry_menu "winetools_menu"
+                  prefix_backup
+                  winetools_menu "$END_CMD"
                   ;;
 
                  6)
+                  registry_menu "winetools_menu"
+                  ;;
+
+                 7)
                   exec_winecfg
                   winetools_menu "$END_CMD"
                   ;;
-                 7)
+                 8)
                   exec_winetricks
                   winetools_menu "$END_CMD"
                   ;;
-                 8)
+                 9)
                   exec_wisotool
                   winetools_menu "$END_CMD"
                   ;;
-                 9)
+                10)
                   [ -z "$END_CMD" ] & END_CMD="main_menu"
                   $END_CMD
                   ;;
@@ -1084,7 +1138,7 @@ END_CMD="$1"
 MSG="Please choose an operation"
 TITLE="Adega: $(basename $PREFIX)"
 REGTWEAKS=$(do_dialog menu 800 600 "$TITLE" "$MSG" "Set video memory size;Run Regedit;Back;")
-case "$REGTWEAKS" in 
+case "$REGTWEAKS" in
             1)
              wine_set_vidmem
              registry_menu "$END_CMD"
@@ -1112,7 +1166,7 @@ wine_chooser
 MSG="Enter any DLL overrides for wine separted with a comma (Blank for none)"
 WINEDLLOVERRIDES="$(do_dialog input "$TITLE" "$MSG" "$WINEDLLOVERRIDES")"
 
-PROGRAM_CHOOSER_OPTIONS="$(do_dialog checks "$TITLE" 400 300 "$MSG" "Show LNK Files;Show EXE Files")" 
+PROGRAM_CHOOSER_OPTIONS="$(do_dialog checks "$TITLE" 400 300 "$MSG" "Show LNK Files;Show EXE Files")"
 echo $PROGRAM_CHOOSER_OPTIONS |grep "1" >/dev/null && SHOW_LNKS=1 || SHOW_LNKS=""
 echo $PROGRAM_CHOOSER_OPTIONS |grep "2" >/dev/null && SHOW_EXES=1 || SHOW_EXES=""
 
@@ -1207,12 +1261,12 @@ done
 if [ -n "$CLI" ]; then
   if [ -z "$RUNLNK" ]; then
    if [ -n "$RUNMODE" ]; then
-     run_prefix
+     prefix_run
    else
      main_menu
    fi
   else
-    run_prefix "$RUNLNK"
+    prefix_run "$RUNLNK"
   fi
 else
   action_menu

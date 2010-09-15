@@ -8,15 +8,14 @@
 ##                 configuring your wine prefixes doing so completely independant
 ##                 of your systems default wine install and prefix.
 ##
-##  REQUIREMENTS:  curl, icoutils, imagemagick, python
+##  REQUIREMENTS:  curl, icoutils, imagemagick
 ##     MAYBE ALSO: ia32-libs lib32asound2 libc6-i386 lib32nss-mdns binfmt-support
 ##                 winbind ttf-symbol-replacement, ttf-mscorefonts-installer
 ##
 ##        AUTHOR:  Justin Whittington (onemyndseye@yahoo.com)
 ##         NOTES:  No Oracle, it DOES NOT depend on wine :P
 ##
-##       LICENSE:
-##                This program is free software; you can redistribute it and/or modify
+##       LICENSE: This program is free software; you can redistribute it and/or modify
 ##                it under the terms of the GNU General Public License as published by
 ##                the Free Software Foundation; either version 2 of the License, or
 ##                (at your option) any later version.
@@ -74,7 +73,7 @@ AUTO_REBUILD_PROGRAMS=1
 #######################################  END Settings ##################################################
 
 
-##########################################   Functions #################################################
+#############################################   Functions ###############################################
 do_help() {
 ADEGA=$(basename $0)
 cat <<HELP_EOF
@@ -134,6 +133,7 @@ EXAMPLES_EOF
 exit 0
 }
 
+############################################ Base level functions ##########################################################
 do_dialog() {
 ## Function to detect the presence of zenity/kdialog and translate
 ## between the two
@@ -236,7 +236,8 @@ case "$1" in
                items+=("$i")
            done
           if [ "$DIALOG_MODE" = "zenity" ]; then
-             zenity --list --width=$HGT --height=$WTH --title="$TITLE" --text="$MSG" --list --column=" " --column=" " --hide-column=1 "${items[@]}"
+             (zenity --list --width=$HGT --height=$WTH --title="$TITLE" --text="$MSG" --list \
+             --column=" " --column=" " --hide-column=1 "${items[@]}")
              unset items
              return $?
           else
@@ -276,7 +277,8 @@ case "$1" in
                items+=("$i")
                items+=("off")
             done
-            echo $(kdialog --name "Adega" --title "$1" $KSIZE --geometry ${2}x${3}+200+200 --checklist "$4" "${items[@]}" 2>/dev/null) | sed s/\"//g
+            echo $(kdialog --name "Adega" --title "$1" $KSIZE --geometry ${2}x${3}+200+200 \
+            --checklist "$4" "${items[@]}" 2>/dev/null) | sed s/\"//g
             unset items
             return $?
           fi
@@ -312,7 +314,8 @@ case "$1" in
           TEXT="$2"
           COMPL_TOTAL="$3"
           COMPL_CMD="${4}"
-          SLEEP="$5"
+          COMPL_FILE="$5"
+          SLEEP="$6"
           PERCT=0
           [ -z "$SLEEP" ] && SLEEP=1
           ( ## Forked subshell ##
@@ -326,6 +329,7 @@ case "$1" in
                    COMPL=$(echo $COMPL_RESULT 2>/dev/null | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
+                   [ ! -f "$COMPL_FILE" ] && PERCT=100
                    echo "$PERCT"
                    sleep $SLEEP
                  done
@@ -338,13 +342,14 @@ case "$1" in
                    COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
+                   [ ! -f "$COMPL_FILE" ] && PERCT=100
                    # check if dbus object exists
                    qdbus $dbusRef 1>/dev/null 2>&1
                    if [ "$?" -ne "0" ]; then
                      # dbus Object does not exist (anymore)
                      exit 0
                    fi
-                   qdbus $dbusRef Set ""  "value" $PERCT
+                   qdbus $dbusRef Set ""  "value" $PERCT 2>&1 >/dev/null
                    sleep $SLEEP
                 done
                 qdbus $dbusRef close
@@ -354,7 +359,6 @@ case "$1" in
           ;;
 esac
 }
-
 
 do_cleanup() {
 ##  I myself am not even sure now why I have 2 tmps
@@ -401,14 +405,43 @@ if [ -f $ADEGA_SCRIPT ]; then
 fi
 }
 
+wine_env() {
+[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+
+# If Wineversion isnt set make a last ditch effort to detect
+# the latest installed version and continue
+if [ -z "$WINEVERSION" ]; then
+  cd $CELLAR/WineVersions/
+  COUNT="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r | wc -l)"
+  if [ $COUNT = 0 ]; then
+    # No wineversions installed.  Call the installer
+    wine_install
+    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
+  else
+    # Choose the latest
+    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
+  fi
+fi
+
+WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION"
+WINESERVER="$WINEVERPATH/usr/bin/wineserver"
+WINELOADER="$WINEVERPATH/usr/bin/wine"
+WINEDLLPATH="$WINEVERPATH/usr/lib/wine"
+LD_LIBRARY_PATH="$WINEVERPATH/usr/lib/wine/:$LD_LIBRARY_PATH"
+WINE_BIN="$WINEVERPATH/usr/bin/wine"
+PATH=$WINEVERPATH/usr/bin:$PATH
+}
+############################################## END Base level functions ##########################################################
+
+############################################# Various Helper functions ##########################################################
 make_icon() {
 ## This ripped pretty much straight from gnome-exe-thumbnailer
 TEMPFILE1=$(mktemp)
 TEMPFILE2=$(mktemp)
 TEMPTHUMB=$(mktemp)
-DEURLEDFILE=$(python -c 'import sys, urlparse, urllib; print urllib.unquote(urlparse.urlparse(sys.argv[1]).path)' "$1")
+FILE="$1"
 
-if wrestool --extract --type=group_icon "$DEURLEDFILE" > $TEMPFILE1 && [ -s $TEMPFILE1 ]
+if wrestool --extract --type=group_icon "$FILE" > $TEMPFILE1 && [ -s $TEMPFILE1 ]
 then
 	read INDEX OFFSET < <(
 		icotool --list $TEMPFILE1 | awk '{
@@ -489,7 +522,6 @@ Icon=$ICON
 Categories=$CATES
 StartupNotify=true
 NEWLAUNCHER_EOF
-
 }
 
 wine_set_vidmem() {
@@ -518,33 +550,9 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES "$WINE_BIN" "C:\Windows\re
 rm -f $REGFILE
 return 0
 }
-wine_env() {
-[ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
+############################################# Various Helper functions ####################################################
 
-# If Wineversion isnt set make a last ditch effort to detect
-# the latest installed version and continue
-if [ -z "$WINEVERSION" ]; then
-  cd $CELLAR/WineVersions/
-  COUNT="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r | wc -l)"
-  if [ $COUNT = 0 ]; then
-    # No wineversions installed.  Call the installer
-    wine_install
-    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
-  else
-    # Choose the latest
-    WINEVERSION="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r |head -n1)"
-  fi
-fi
-
-WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION"
-WINESERVER="$WINEVERPATH/usr/bin/wineserver"
-WINELOADER="$WINEVERPATH/usr/bin/wine"
-WINEDLLPATH="$WINEVERPATH/usr/lib/wine"
-LD_LIBRARY_PATH="$WINEVERPATH/usr/lib/wine/:$LD_LIBRARY_PATH"
-WINE_BIN="$WINEVERPATH/usr/bin/wine"
-PATH=$WINEVERPATH/usr/bin:$PATH
-}
-
+############################################## EXEC functions #############################################################
 exec_wine() {
 [ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
 
@@ -588,7 +596,6 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES winecfg
 }
 
 exec_winetricks() {
-
 if [ -f ~/.adega/winetricks.sh ]; then
   # Check the age
   CHK="$(find ~/.adega/winetricks.sh -mtime +${WINETRICKS_AGE})"
@@ -661,6 +668,7 @@ fi
 wine_env
 WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/wisotool.sh
 }
+########################################## END EXEC functions #########################################################
 
 
 get_programs() {
@@ -678,10 +686,10 @@ fi
 }
 
 build_program_list() {
+LIST=$PREFIX/adega-programs.list
+
 ## Will need a wine env
 wine_env
-
-LIST=$PREFIX/adega-programs.list
 
 ### Build a EXE List
 IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
@@ -732,15 +740,14 @@ rm -f $TMP_LIST
 rm -f $TMP_MENU
 }
 
+####################################### Prefix functions ########################################################
 prefix_cleaner() {
 rm -rfd ${PREFIX}/drive_c/users/onemyndseye/Temp/*
 rm -rfd ${PREFIX}/drive_c/windows/temp/*
 rm -rfd "${PREFIX}/drive_c/Program Files/InstallShield Installation Information/"
-
 }
 
 prefix_backup() {
-
 NAME="$(basename "$PREFIX")"
 MSG1="We will not create a tar/gz backup of the following prefix: \n \n $NAME"
 MSG2="\n\nDo you wish to proceed?"
@@ -758,11 +765,12 @@ if [ -n "$BACKUP" ]; then
   CMD='cat $PROGRESS | wc -l'
   TITLE="Adega - $NAME Backup"
   MSG="Compressing $NAME ..."
-  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" 0.5  &
-  KILLPID=$!
+  CFILE=$(mktemp)
+  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" "$CFILE" 0.5  &
   DATE=$(date +%Y%m%d%H%M%S)
   FILENAME="$HOME/adegaprefix-${NAME}-${DATE}.tar.gz"
   tar -vpczf "$FILENAME" ./${NAME}/ > $PROGRESS
+  rm -f $CFILE
   do_dialog msg "$TITLE" "Operation complete! \n\n Saved backup to $FILENAME"
 fi
 }
@@ -786,24 +794,17 @@ if [ -n "$TOOLS" ]; then
 fi
 }
 
-reset_prefix() {
+prefix_reset() {
 [ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
 
 wine_env
 WINEPREFIX=$PREFIX wineserver -k
 WINEPREFIX=$PREFIX wineboot
-
 }
+
 prefix_run() {
 [ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
-
 RUNLNK="$1"
-
-## Sanity check
-if [ ! -d "$PREFIX" ]; then
-  echo "$PREFIX is a invalid WINE prefix .."
-  exit 1
-fi
 
 ## Set Wine env
 wine_env
@@ -836,6 +837,7 @@ else
   exit 23
 fi
 }
+###################################### END Prefix functions ########################################################
 
 ############################################# Various Choosers ########################################################
 wine_exe_chooser() {
@@ -938,10 +940,12 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
     CHK="${CELLAR}/WineVersions/${INSTALL_VERSION}"
     if [ ! -d $CHK ]; then
       # Everything looks ok.  Proceed
-      WINE_BOTTLE_FILE="$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |; s|;| |}' |grep -m 1 -F "wine-${INSTALL_VERSION}." |awk '{print $1}')"
+      WINE_BOTTLE_FILE="$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |; s|;| |}' \
+      |grep -m 1 -F "wine-${INSTALL_VERSION}." |awk '{print $1}')"
       WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
 
       # Download WINE
+      WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
       do_download "$WINE_URL" "Downloading WINE $INSTALL_VERSION" "${CELLAR}/WineVersions/tmp"
       if [ "$?" != "0" ]; then
         # WINE download failed.
@@ -980,9 +984,11 @@ TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
 SIZE=$[ $TMP /  1024 ]
 
 CMD='du $FILE | cut -f1'
-do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" 0.5 &
+CFILE=$(mktemp)
+do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$CFILE" 0.5 &
 wget -q "$DOWNLOAD_URL"
 WGET_STAT=$?
+rm -f "$CFILE"
 
 cd "$DL_CDIR"
 return $WGET_STAT
@@ -1047,7 +1053,7 @@ case "$COMMAND_MODE" in
               run_menu "main_menu"
               ;;
              2)
-              reset_prefix
+              prefix_reset
               run_menu "$END_CMD"
               ;;
              3)

@@ -312,7 +312,9 @@ case "$1" in
           TEXT="$2"
           COMPL_TOTAL="$3"
           COMPL_CMD="${4}"
+          SLEEP="$5"
           PERCT=0
+          [ -z "$SLEEP" ] && SLEEP=1
           ( ## Forked subshell ##
               if [ "$DIALOG_MODE" = "zenity" ]; then
                 ARGS="--auto-kill --auto-close"
@@ -325,7 +327,7 @@ case "$1" in
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
                    echo "$PERCT"
-                   sleep 1
+                   sleep $SLEEP
                  done
                 ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
               else
@@ -343,7 +345,7 @@ case "$1" in
                      exit 0
                    fi
                    qdbus $dbusRef Set ""  "value" $PERCT
-                   sleep 1
+                   sleep $SLEEP
                 done
                 qdbus $dbusRef close
               fi
@@ -742,16 +744,27 @@ prefix_backup() {
 NAME="$(basename "$PREFIX")"
 MSG1="We will not create a tar/gz backup of the following prefix: \n \n $NAME"
 MSG2="\n\nDo you wish to proceed?"
+MSG="$MSG1 $MSG2"
 do_dialog ask "Adega: $NAME - Prefix backup" "$MSG" && BACKUP=1 || BACKUP=""
+
 
 if [ -n "$BACKUP" ]; then
   cd "$PREFIX"
   FILE_COUNT="$(find . |wc -l)"
 
   cd $CELLAR
-  tar -pczf ~/${NAME}.tar.gz ./${NAME}/
+  PROGRESS=$(mktemp)
+  echo 0 >$PROGRESS
+  CMD='cat $PROGRESS | wc -l'
+  TITLE="Adega - $NAME Backup"
+  MSG="Compressing $NAME ..."
+  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" 0.5  &
+  KILLPID=$!
+  DATE=$(date +%Y%m%d%H%M%S)
+  FILENAME="$HOME/adegaprefix-${NAME}-${DATE}.tar.gz"
+  tar -vpczf "$FILENAME" ./${NAME}/ > $PROGRESS
+  do_dialog msg "$TITLE" "Operation complete! \n\n Saved backup to $FILENAME"
 fi
-
 }
 
 prefix_create() {
@@ -967,13 +980,10 @@ TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
 SIZE=$[ $TMP /  1024 ]
 
 CMD='du $FILE | cut -f1'
-do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" &
-DIALOG_WATCHER_PIDS=$!
-
+do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" 0.5 &
 wget -q "$DOWNLOAD_URL"
 WGET_STAT=$?
 
-kill -9 $DIALOG_WATCHER_PIDS
 cd "$DL_CDIR"
 return $WGET_STAT
 }

@@ -1,14 +1,14 @@
 #!/bin/bash
-##################################################################################
+#########################################################################################
 ##          FILE:  adega
-##       VERSION:  0.8-rc3
+##       VERSION:  0.8-rc4
 ##
 ##   DESCRIPTION:  Derrived from the Portugese word for wine estate or wine cellar,
 ##                 Adega is a simple program to help with the task of managing and
 ##                 configuring your wine prefixes doing so completely independant
 ##                 of your systems default wine install and prefix.
 ##
-##  REQUIREMENTS:  curl, icoutils, imagemagick
+##  REQUIREMENTS:  curl, icoutils, imagemagick, wget
 ##     MAYBE ALSO: ia32-libs lib32asound2 libc6-i386 lib32nss-mdns binfmt-support
 ##                 winbind ttf-symbol-replacement, ttf-mscorefonts-installer
 ##
@@ -30,7 +30,7 @@
 ##                Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
 ##                MA 02110-1301, USA.
 ##
-###################################################################################
+#########################################################################################
 
 ###################################### Variables and Settings ########################################
 # Default location for the wine-cellar
@@ -73,7 +73,7 @@ AUTO_REBUILD_PROGRAMS=1
 #######################################  END Settings ##################################################
 
 
-#############################################   Functions ###############################################
+############################################# Functions ################################################
 do_help() {
 ADEGA=$(basename $0)
 cat <<HELP_EOF
@@ -309,15 +309,18 @@ case "$1" in
           fi
           ;;
      progress)
+          # Massively retarded universal progress dialog
+          # Usage: do_dialog progress <TITLE> <TEXT> <Complete #> <Run CMD> <Status CMD> (<Update freq>)
           shift 1
           TITLE="$1"
           TEXT="$2"
           COMPL_TOTAL="$3"
-          COMPL_CMD="${4}"
-          COMPL_FILE="$5"
+          EXEC_CMD="${4}"
+          COMPL_CMD="${5}"
           SLEEP="$6"
           PERCT=0
           [ -z "$SLEEP" ] && SLEEP=1
+          DIALOG_ERROR=0
           ( ## Forked subshell ##
               if [ "$DIALOG_MODE" = "zenity" ]; then
                 ARGS="--auto-kill --auto-close"
@@ -329,42 +332,83 @@ case "$1" in
                    COMPL=$(echo $COMPL_RESULT 2>/dev/null | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
-                   [ ! -f "$COMPL_FILE" ] && PERCT=100
+                   CYCLES=$[ $CYCLES + 1 ]
+                   if [ $CYCLES = 15 ]; then
+                     CYCLES=0
+                     if [ -z "$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep)" ]; then
+                       PERCT=100
+                       EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
+                       kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                       return 1
+                     fi
+                   fi
                    echo "$PERCT"
                    sleep $SLEEP
                  done
                 ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
+                ZEN_ERR=$?
+                # Sloppy i guess but it works.
+                EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
+                kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                return $ZEN_ERR
               else
                 dbusRef=$(kdialog --progressbar "$TEXT" 100)
+                (
+                CYCLES=0
                 while [ $PERCT != 100 ]; do
                    COMPL_RESULT="$(eval ${COMPL_CMD})"
                    # Ensure we only get numbers
                    COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
-                   [ ! -f "$COMPL_FILE" ] && PERCT=100
+
                    # check if dbus object exists
                    qdbus $dbusRef 1>/dev/null 2>&1
                    if [ "$?" -ne "0" ]; then
                      # dbus Object does not exist (anymore)
-                     exit 0
+                     return 1
+                   fi
+                   CYCLES=$[ $CYCLES + 1 ]
+                   if [ $CYCLES = 15 ]; then
+                     CYCLES=0
+                     if [ -z "$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep)" ]; then
+                       PERCT=100
+                       EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
+                       kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                       qdbus $dbusRef close
+                       return 1
+                     fi
                    fi
                    qdbus $dbusRef Set ""  "value" $PERCT 2>&1 >/dev/null
                    sleep $SLEEP
                 done
                 qdbus $dbusRef close
+                return 0
+                )
+                KDIA_ERR=$?
+                # Sloppy i guess but it works.
+                EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
+                kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                return $KDIA_ERR
               fi
-          )
+          ) &
+          DIALOG_PID=$!
+          eval "$EXEC_CMD" & WAIT_PID=$!
+          wait $WAIT_PID && WAIT_ERR=0 || WAIT_ERR=1
+          wait $DIALOG_PID && DIALOG_ERROR=0 || DIALOG_ERROR=1
+          [ "$DIALOG_MODE" = "kdialog" ] && qdbus $dbusRef close
+          [ $DIALOG_ERROR != 0 ] && return $DIALOG_ERROR
+          [ $WAIT_ERR != 0 ] && return $WAIT_ERR
           return 0
           ;;
 esac
 }
 
 do_cleanup() {
-##  I myself am not even sure now why I have 2 tmps
-rm -rfd "$TMPWORKING"
-rm -rfd "$TMPBUILD"
-rm -rfd ~/.adega-installer.tmp/
+
+
+rm -rfd "$ADEGA_TEMP"
+
 }
 
 adega_updater() {
@@ -431,14 +475,14 @@ LD_LIBRARY_PATH="$WINEVERPATH/usr/lib/wine/:$LD_LIBRARY_PATH"
 WINE_BIN="$WINEVERPATH/usr/bin/wine"
 PATH=$WINEVERPATH/usr/bin:$PATH
 }
-############################################## END Base level functions ##########################################################
+############################################## END Base level functions #####################################
 
-############################################# Various Helper functions ##########################################################
+############################################# Various Helper functions ######################################
 make_icon() {
 ## This ripped pretty much straight from gnome-exe-thumbnailer
-TEMPFILE1=$(mktemp)
-TEMPFILE2=$(mktemp)
-TEMPTHUMB=$(mktemp)
+TEMPFILE1=$(mktemp -p $ADEGA_TEMP)
+TEMPFILE2=$(mktemp -p $ADEGA_TEMP)
+TEMPTHUMB=$(mktemp -p $ADEGA_TEMP)
 FILE="$1"
 
 if wrestool --extract --type=group_icon "$FILE" > $TEMPFILE1 && [ -s $TEMPFILE1 ]
@@ -693,7 +737,7 @@ wine_env
 
 ### Build a EXE List
 IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
-TMP_LIST=$(mktemp)
+TMP_LIST=$(mktemp -p $ADEGA_TEMP)
 IFS=$'\n'
 for i in $(get_programs); do
    EXT=${i##*.}
@@ -717,7 +761,7 @@ for i in $(get_programs); do
    fi
 done
 ## Format the list
-TMP_MENU=$(mktemp)
+TMP_MENU=$(mktemp -p $ADEGA_TEMP)
 cat $TMP_LIST |egrep -i -v  "$IGNORE_PATTERNS" >>$TMP_MENU
 chklist="$(cat $TMP_MENU |sed 's/^[ \t]*//;s/[ \t]*$//' | sed '/^$/d' |wc -l)"
 if [ $chklist = 0 ]; then
@@ -760,18 +804,23 @@ if [ -n "$BACKUP" ]; then
   FILE_COUNT="$(find . |wc -l)"
 
   cd $CELLAR
-  PROGRESS=$(mktemp)
+  PROGRESS=$(mktemp -p $ADEGA_TEMP)
   echo 0 >$PROGRESS
-  CMD='cat $PROGRESS | wc -l'
+
   TITLE="Adega - $NAME Backup"
   MSG="Compressing $NAME ..."
-  CFILE=$(mktemp)
-  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" "$CFILE" 0.5  &
   DATE=$(date +%Y%m%d%H%M%S)
   FILENAME="$HOME/adegaprefix-${NAME}-${DATE}.tar.gz"
-  tar -vpczf "$FILENAME" ./${NAME}/ > $PROGRESS
-  rm -f $CFILE
-  do_dialog msg "$TITLE" "Operation complete! \n\n Saved backup to $FILENAME"
+  CMD='tar -vpczf "$FILENAME" ./${NAME}/ > $PROGRESS'
+  SCMD='cat $PROGRESS | wc -l'
+  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" "$SCMD" 0.5
+  TAR_ERR=$?
+
+  if [ $TAR_ERR = 0 ]; then
+    do_dialog msg "$TITLE" "Operation complete! \n\n Saved backup to $FILENAME"
+  else
+    di_dialog error "$TITLE" "Creating $FILENAME Failed!!"
+  fi
 fi
 }
 
@@ -983,10 +1032,13 @@ FILE=$(basename "$DOWNLOAD_URL")
 TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
 SIZE=$[ $TMP /  1024 ]
 
-CMD='du $FILE | cut -f1'
-CFILE=$(mktemp)
-do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$CFILE" 0.5 &
-wget -q "$DOWNLOAD_URL"
+
+#CFILE=$(mktemp -p $ADEGA_TEMP)
+
+CMD="wget -q "$DOWNLOAD_URL""
+PCMD='du $FILE | cut -f1'
+do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$PCMD" 0.5
+#wget -q "$DOWNLOAD_URL"
 WGET_STAT=$?
 rm -f "$CFILE"
 
@@ -1202,12 +1254,19 @@ $END_CMD
 
 ######################################## END Functions ##########################################################
 #################################################################################################################
-############# Init ###################
+################################# Init ###########################################################
 ## Need to strictly define the location of this script
 ## and hopfully this will work consistantly.  Trying to mimick PHP realpath()
 ADEGA_SCRIPT="$(readlink -f $(type -a "$0" |awk '{print $3}'|head -n1))"
+
+# Define some temp space and trap exits
+trap "{ do_cleanup ; exit 0; }" EXIT
+mkdir -p $HOME/.adega/
+ADEGA_TEMP=$(mktemp -d ~/.adega/tmp.XXXXXXX)
+
+# check for updates
 adega_updater
-############# END Init ################
+###################################### END Init ##################################################
 
 while [ "$1" ]; do
   case "$1" in

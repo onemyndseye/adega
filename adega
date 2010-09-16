@@ -1,7 +1,7 @@
 #!/bin/bash
 #########################################################################################
 ##          FILE:  adega
-##       VERSION:  0.8-rc4
+##       VERSION:  0.8-rc5
 ##
 ##   DESCRIPTION:  Derrived from the Portugese word for wine estate or wine cellar,
 ##                 Adega is a simple program to help with the task of managing and
@@ -32,7 +32,9 @@
 ##
 #########################################################################################
 
-###################################### Variables and Settings ########################################
+##################################### Variables and Settings #######################################
+#
+##### Settings - DO NOT delete or change this line +++######
 # Default location for the wine-cellar
 CELLAR=$HOME/wine-cellar
 
@@ -69,6 +71,9 @@ SHOW_LNKS=1
 # Rebuild installed program list every time the menu is shown.  Slower
 # but more accurate. Comment to turn off
 AUTO_REBUILD_PROGRAMS=1
+
+##### END Settings - DO NOT delete or change this line +++######
+#
 ########################################################################################################
 #######################################  END Settings ##################################################
 
@@ -99,6 +104,8 @@ Usage: $ADEGA   <options>
                                        wine enviroment variables including WINEPREFIX
                                        WINEDLLPATH, WINELOADER, WINEVERSION, WINEVERPATH
                                        before executing the given command.
+
+        --reset                     :: Reset the user prefs stored in ~/.adega/adega.cfg
 
         --update                    :: Check for an adega update.
 
@@ -327,7 +334,7 @@ case "$1" in
                 # Child Process for zenity
                 (
                  while [ $PERCT != 100 ]; do
-                   COMPL_RESULT="$(eval ${COMPL_CMD})"
+                   COMPL_RESULT="$(eval ${COMPL_CMD} 2>/dev/null)"
                    # Ensure we only get numbers
                    COMPL=$(echo $COMPL_RESULT 2>/dev/null | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
@@ -356,7 +363,7 @@ case "$1" in
                 (
                 CYCLES=0
                 while [ $PERCT != 100 ]; do
-                   COMPL_RESULT="$(eval ${COMPL_CMD})"
+                   COMPL_RESULT="$(eval ${COMPL_CMD} 2>/dev/null)"
                    # Ensure we only get numbers
                    COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
@@ -406,9 +413,8 @@ esac
 
 do_cleanup() {
 
-
 rm -rfd "$ADEGA_TEMP"
-
+rm -rfd ~/.adega/temp/
 }
 
 adega_updater() {
@@ -952,7 +958,7 @@ if [ $COUNT = 0 ]; then
 else
   TITLE="Adega: $(basename $PREFIX)"
   MSG="Select a WINE Version"
-  WINE_LIST="$(ls -p -1 |grep -v "tmp/" |grep "/" |sed '{s|/||g}' |sort -r  |tr '\n' ";")"
+  WINE_LIST="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r  |tr '\n' ";")"
   GET_VERS="$(do_dialog menu 800 600 "$TITLE" "$MSG" "$WINE_LIST")"
 
   # Translate tag number from do_dialog
@@ -973,8 +979,9 @@ fi
 ################################################# END Various Choosers ##############################################
 
 wine_install() {
-mkdir -p "${CELLAR}/WineVersions/tmp"
-cd "${CELLAR}/WineVersions/tmp"
+WINE_TMP="$ADEGA_TEMP/wine-tmp"
+mkdir -p "$WINE_TMP"
+cd "$WINE_TMP"
 
 VERSIONS=$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |g}' |awk '{print $2}' |sort -r)
 LIST="$(echo -e $VERSIONS |sed '{s/ /;/g}')"
@@ -995,7 +1002,7 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
 
       # Download WINE
       WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
-      do_download "$WINE_URL" "Downloading WINE $INSTALL_VERSION" "${CELLAR}/WineVersions/tmp"
+      do_download "$WINE_URL" "Downloading WINE $INSTALL_VERSION" "$WINE_TMP"
       if [ "$?" != "0" ]; then
         # WINE download failed.
         do_dialog error "Alert" "Download of  WINE failed! Aborting..."
@@ -1010,8 +1017,8 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
       fi
     fi
   done
-  mv ${CELLAR}/WineVersions/tmp/wineversion/* ${CELLAR}/WineVersions/.
-  rm -rfd "${CELLAR}/WineVersions/tmp"
+  mv ${WINE_TMP}/wineversion/* ${CELLAR}/WineVersions/.
+  rm -rfd "$WINE_TMP"
   do_dialog msg "Adega: Wine installer" "Operation Complete"
   return 0
 else
@@ -1032,13 +1039,9 @@ FILE=$(basename "$DOWNLOAD_URL")
 TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
 SIZE=$[ $TMP /  1024 ]
 
-
-#CFILE=$(mktemp -p $ADEGA_TEMP)
-
 CMD="wget -q "$DOWNLOAD_URL""
 PCMD='du $FILE | cut -f1'
 do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$PCMD" 0.5
-#wget -q "$DOWNLOAD_URL"
 WGET_STAT=$?
 rm -f "$CFILE"
 
@@ -1258,11 +1261,35 @@ $END_CMD
 ## Need to strictly define the location of this script
 ## and hopfully this will work consistantly.  Trying to mimick PHP realpath()
 ADEGA_SCRIPT="$(readlink -f $(type -a "$0" |awk '{print $3}'|head -n1))"
+echo $ADEGA_SCRIPT
 
 # Define some temp space and trap exits
 trap "{ do_cleanup ; exit 0; }" EXIT
-mkdir -p $HOME/.adega/
-ADEGA_TEMP=$(mktemp -d ~/.adega/tmp.XXXXXXX)
+mkdir -p $HOME/.adega/temp/
+ADEGA_TEMP=$(mktemp -d ~/.adega/temp/tmp.XXXXXXX)
+
+# Check for cmdline reset prefs
+if [ "$1" = "--reset" ]; then
+  shift 1
+  rm -f $HOME/.adega/adega.cfg 2>&1 >/dev/null
+fi
+
+# Check for/create user prefs
+if [ -f $HOME/.adega/adega.cfg ]; then
+  . $HOME/.adega/adega.cfg
+else
+  # Create defaults from this scripts header.
+  echo "Creating user preferences file .."
+  START="##### Settings"
+  END="##### END Settings"
+  AWK_STRING_START="/^$START/ {print NR + 1; exit 0; }"
+  AWK_STRING_END="/^$END/ {print NR - 1; exit 0; }"
+  DATA_START=$(awk "$AWK_STRING_START" "$ADEGA_SCRIPT")
+  DATA_END=$(awk "$AWK_STRING_END" "$ADEGA_SCRIPT")
+  SED_STRING=""$DATA_START","$DATA_END"p"
+  echo $SED_STRING
+  cat "$ADEGA_SCRIPT" | sed -n "$SED_STRING" > $HOME/.adega/adega.cfg
+fi
 
 # check for updates
 adega_updater

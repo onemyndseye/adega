@@ -244,13 +244,13 @@ case "$1" in
            done
           if [ "$DIALOG_MODE" = "zenity" ]; then
              (zenity --list --width=$HGT --height=$WTH --title="$TITLE" --text="$MSG" --list \
-             --column=" " --column=" " --hide-column=1 "${items[@]}")
+             --column=" " --column=" " --hide-column=1 "${items[@]}") && STAT=0 || STAT=1
              unset items
-             return $?
+             return $STAT
           else
-            kdialog --name "Adega" --title "$TITLE" --geometry ${HGT}x${WTH}+200+200 --menu "$MSG" "${items[@]}" 2>/dev/null
+            kdialog --name "Adega" --title "$TITLE" --geometry ${HGT}x${WTH}+200+200 --menu "$MSG" "${items[@]}" 2>/dev/null && STAT=0 || STAT=1
             unset items
-            return $?
+            return $STAT
           fi
           ;;
 
@@ -318,51 +318,40 @@ case "$1" in
      progress)
           # Massively retarded universal progress dialog
           # Usage: do_dialog progress <TITLE> <TEXT> <Complete #> <Run CMD> <Status CMD> (<Update freq>)
+          # Note:  Make sure <Status CMD> is simple and LIGHT
           shift 1
           TITLE="$1"
           TEXT="$2"
           COMPL_TOTAL="$3"
           EXEC_CMD="${4}"
           COMPL_CMD="${5}"
-          SLEEP="$6"
           PERCT=0
-          [ -z "$SLEEP" ] && SLEEP=1
-          DIALOG_ERROR=0
+          [ -z "$SLEEP" ] && SLEEP=0
+          eval "$EXEC_CMD" & WAIT_PID=$!
           ( ## Forked subshell ##
               if [ "$DIALOG_MODE" = "zenity" ]; then
                 ARGS="--auto-kill --auto-close"
                 # Child Process for zenity
                 (
-                 while [ $PERCT != 100 ]; do
+                 while [ -d /proc/${WAIT_PID} ]; do
                    COMPL_RESULT="$(eval ${COMPL_CMD} 2>/dev/null)"
                    # Ensure we only get numbers
                    COMPL=$(echo $COMPL_RESULT 2>/dev/null | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
-                   CYCLES=$[ $CYCLES + 1 ]
-                   if [ $CYCLES = 15 ]; then
-                     CYCLES=0
-                     if [ -z "$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep)" ]; then
-                       PERCT=100
-                       EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
-                       kill -9 $EXE_CMD_PID 2>&1 >/dev/null
-                       return 1
-                     fi
-                   fi
                    echo "$PERCT"
                    sleep $SLEEP
                  done
+                 [ $PERCT != 100 ] && PERCT=ABORT
+                 echo 100
                 ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
-                ZEN_ERR=$?
-                # Sloppy i guess but it works.
-                EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
-                kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                [ "$PERCT" = "ABORT" ] && ZEN_ERR=1 || ZEN_ERR=0
+                kill -9 $WAIT_PID 2>&1 >/dev/null
                 return $ZEN_ERR
               else
                 dbusRef=$(kdialog --progressbar "$TEXT" 100)
                 (
-                CYCLES=0
-                while [ $PERCT != 100 ]; do
+                while [ -d /proc/${WAIT_PID} ]; do
                    COMPL_RESULT="$(eval ${COMPL_CMD} 2>/dev/null)"
                    # Ensure we only get numbers
                    COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
@@ -373,37 +362,22 @@ case "$1" in
                    qdbus $dbusRef 1>/dev/null 2>&1
                    if [ "$?" -ne "0" ]; then
                      # dbus Object does not exist (anymore)
-                     return 1
-                   fi
-                   CYCLES=$[ $CYCLES + 1 ]
-                   if [ $CYCLES = 15 ]; then
-                     CYCLES=0
-                     if [ -z "$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep)" ]; then
-                       PERCT=100
-                       EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
-                       kill -9 $EXE_CMD_PID 2>&1 >/dev/null
-                       qdbus $dbusRef close
-                       return 1
-                     fi
+                     PERCT=ABORT
+                     break
                    fi
                    qdbus $dbusRef Set ""  "value" $PERCT 2>&1 >/dev/null
                    sleep $SLEEP
                 done
                 qdbus $dbusRef close
-                return 0
-                )
-                KDIA_ERR=$?
-                # Sloppy i guess but it works.
-                EXE_CMD_PID="$(ps xU $USER |grep "$EXEC_CMD" |grep -v grep|awk '{print $1}')"
-                kill -9 $EXE_CMD_PID 2>&1 >/dev/null
+                kill -9 $WAIT_PID 2>&1 >/dev/null
+                [ "$PERCT" = "ABORT" ] && KDIA_ERR=1 || KDIA_ERR=0
                 return $KDIA_ERR
+                )
               fi
           ) &
           DIALOG_PID=$!
-          eval "$EXEC_CMD" & WAIT_PID=$!
           wait $WAIT_PID && WAIT_ERR=0 || WAIT_ERR=1
           wait $DIALOG_PID && DIALOG_ERROR=0 || DIALOG_ERROR=1
-          [ "$DIALOG_MODE" = "kdialog" ] && qdbus $dbusRef close
           [ $DIALOG_ERROR != 0 ] && return $DIALOG_ERROR
           [ $WAIT_ERR != 0 ] && return $WAIT_ERR
           return 0
@@ -819,7 +793,7 @@ if [ -n "$BACKUP" ]; then
   FILENAME="$HOME/adegaprefix-${NAME}-${DATE}.tar.gz"
   CMD='tar -vpczf "$FILENAME" ./${NAME}/ > $PROGRESS'
   SCMD='cat $PROGRESS | wc -l'
-  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" "$SCMD" 0.5
+  do_dialog progress "$TITLE" "$MSG" $FILE_COUNT "$CMD" "$SCMD"
   TAR_ERR=$?
 
   if [ $TAR_ERR = 0 ]; then
@@ -909,6 +883,7 @@ TITLE="$(basename $PREFIX) :: Available Windows Programs"
 TEXT="Select a program to run"
 PROG_LIST=$(cat $LIST | tr '\n' ";")
 PROGRAM="$(do_dialog menu 800 600 "$TITLE" "$TEXT" "$PROG_LIST")"
+[ -z "$PROGRAM" ] && return 1
 
 # Translate the tag number given by do_dialog
 RUNLNK="$(cat $LIST | sed -n "${PROGRAM}p" |sed '{s|::: |::: \n|}' |grep -v ":::")"
@@ -1041,7 +1016,7 @@ SIZE=$[ $TMP /  1024 ]
 
 CMD="wget -q "$DOWNLOAD_URL""
 PCMD='du $FILE | cut -f1'
-do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$PCMD" 0.5
+do_dialog progress "Adega" "Downloading $FILE .." $SIZE "$CMD" "$PCMD"
 WGET_STAT=$?
 rm -f "$CFILE"
 
@@ -1057,6 +1032,8 @@ MENU_STRING="${MENU1}${MENU2}"
 TITLE="Adega"
 MSG="Please choose an operation"
 ACTION=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
+[ -z "$ACTION" ] && exit 0
+
 case "$ACTION" in
               1)
                prefix_chooser
@@ -1102,6 +1079,7 @@ MSG="Please choose an action for the selected prefix."
 MENU_STRING="Run a program;Kill all running programs;Adega Toolbox;Back;"
 TITLE="Adega: $(basename $PREFIX)"
 COMMAND_MODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
+[ -z "$COMMAND_MODE" ] && exit 1
 
 case "$COMMAND_MODE" in
              1)
@@ -1133,6 +1111,8 @@ MENU_STRING="Run a installed program;Choose an EXE to run;Back;"
 TITLE="Adega: $(basename $PREFIX)"
 RUNMODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
 
+[ -z "$RUNMODE" ] && RUNMODE=3
+
 case "$RUNMODE" in
                  1)
                    prefix_run
@@ -1158,6 +1138,7 @@ MENU3="winetricks;wisotool;Back;"
 MENU_STRING="${MENU1}${MENU2}${MENU3}${MENU4}"
 TOOLSMODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
 
+[ -z "$TOOLSMODE" ] && TOOLSMODE=10
 case "$TOOLSMODE" in
                  1)
                   prefix_options "winetools_menu"
@@ -1209,6 +1190,8 @@ END_CMD="$1"
 MSG="Please choose an operation"
 TITLE="Adega: $(basename $PREFIX)"
 REGTWEAKS=$(do_dialog menu 800 600 "$TITLE" "$MSG" "Set video memory size;Run Regedit;Back;")
+[ -z "$REGTWEAKS" ] && REGTWEAKS=3
+
 case "$REGTWEAKS" in
             1)
              wine_set_vidmem
@@ -1261,7 +1244,6 @@ $END_CMD
 ## Need to strictly define the location of this script
 ## and hopfully this will work consistantly.  Trying to mimick PHP realpath()
 ADEGA_SCRIPT="$(readlink -f $(type -a "$0" |awk '{print $3}'|head -n1))"
-echo $ADEGA_SCRIPT
 
 # Define some temp space and trap exits
 trap "{ do_cleanup ; exit 0; }" EXIT
@@ -1297,12 +1279,12 @@ adega_updater
 
 while [ "$1" ]; do
   case "$1" in
-            --cellar)
+            --cellar|-c)
                     CLI=1
                     CELLAR=$2
                     shift 2
                     ;;
-            --prefix)
+            --prefix|-p)
                     CLI=1
                     if [ -d $CELLAR/$2 ]; then
                       PREFIX=$CELLAR/$2
@@ -1312,7 +1294,7 @@ while [ "$1" ]; do
                     fi
                     shift 2
                     ;;
-            --env)
+            --env|-e)
                     # This option must be last
                     shift 1
                     ENV_CMD="${@}"
@@ -1323,39 +1305,57 @@ while [ "$1" ]; do
                       exit $?
                     else
                       echo "Error: no prefix given"
+                      do_help
                       exit 1
                     fi
                     break
                     ;;
 
-            --run)
+            --run|-r)
                     # This option must be last
+                    CLI=1
                     RUNMODE=1
                     RUNLNK="$2"
-                    if [ -n "$RUNLNK" ]; then
-                      # Store programs args for later
-                      shift 2
-                      PROGRAM_ARGS="${@}"
+                    if [ -n "$PREFIX" ]; then
+                      if [ -n "$RUNLNK" ]; then
+                        # Store programs args for later
+                        shift 2
+                        PROGRAM_ARGS="${@}"
+                      fi
+                    else
+                      echo "Error: no prefix given"
+                      do_help
+                      exit 1
                     fi
                     break
                     ;;
-            --update)
+            --update|-u)
+                    CLI=1
                     UPDATE_NOW=1
                     adega_updater
                     exit 0
                     break
                     ;;
             --help)
+                    CLI=1
                     do_help
                     exit 0
                     break
                     ;;
 
             --help-all)
+                    CLI=1
                     EXAMPLES=1
                     do_help
                     exit 0
                     break
+                    ;;
+                   *)
+                    if [ -z "$CLI_MODE" ]; then
+                      echo "Error: $1 is a invalid option."
+                      do_help
+                      exit 1
+                    fi
                     ;;
   esac
 done

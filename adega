@@ -345,8 +345,12 @@ case "$1" in
                  [ $PERCT != 100 ] && PERCT=ABORT
                  echo 100
                 ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
-                [ "$PERCT" = "ABORT" ] && ZEN_ERR=1 || ZEN_ERR=0
-                kill -9 $WAIT_PID 2>&1 >/dev/null
+                if [ "$PERCT" = "ABORT" ]; then
+                  kill -9 $WAIT_PID 2>&1 >/dev/null
+                  ZEN_ERR=1
+                else
+                  ZEN_ERR=0
+                fi
                 return $ZEN_ERR
               else
                 dbusRef=$(kdialog --progressbar "$TEXT" 100)
@@ -369,8 +373,12 @@ case "$1" in
                    sleep $SLEEP
                 done
                 qdbus $dbusRef close
-                kill -9 $WAIT_PID 2>&1 >/dev/null
-                [ "$PERCT" = "ABORT" ] && KDIA_ERR=1 || KDIA_ERR=0
+                if [ "$PERCT" = "ABORT" ]; then
+                  kill -9 $WAIT_PID 2>&1 >/dev/null
+                  KIA_ERR=1
+                else
+                  KDIA_ERR=0
+                fi
                 return $KDIA_ERR
                 )
               fi
@@ -386,7 +394,6 @@ esac
 }
 
 do_cleanup() {
-
 rm -rfd "$ADEGA_TEMP"
 rm -rfd ~/.adega/temp/
 }

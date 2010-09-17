@@ -327,12 +327,12 @@ case "$1" in
           COMPL_CMD="${5}"
           PERCT=0
           [ -z "$SLEEP" ] && SLEEP=0
-          eval "$EXEC_CMD" & WAIT_PID=$!
+          eval "$EXEC_CMD"  & WAIT_PID=$!
           ( ## Forked subshell ##
               if [ "$DIALOG_MODE" = "zenity" ]; then
                 ARGS="--auto-kill --auto-close"
                 # Child Process for zenity
-                (
+                ( (
                  while [ -d /proc/${WAIT_PID} ]; do
                    COMPL_RESULT="$(eval ${COMPL_CMD} 2>/dev/null)"
                    # Ensure we only get numbers
@@ -342,15 +342,10 @@ case "$1" in
                    echo "$PERCT"
                    sleep $SLEEP
                  done
-                 [ $PERCT != 100 ] && PERCT=ABORT
                  echo 100
-                ) | zenity --progress --title="$TITLE" --text="$TEXT" $ARGS
-                if [ "$PERCT" = "ABORT" ]; then
-                  kill -9 $WAIT_PID 2>&1 >/dev/null
-                  ZEN_ERR=1
-                else
-                  ZEN_ERR=0
-                fi
+                ) | zenity --progress --auto-kill --title="$TITLE" --text="$TEXT" $ARGS ) & ZEN=$!
+                wait $ZEN && ZEN_ERR=0 || ZEN_ERR=1
+                [ $ZEN_ERR = 1 ] && kill -9 $WAIT_PID
                 return $ZEN_ERR
               else
                 dbusRef=$(kdialog --progressbar "$TEXT" 100)
@@ -361,7 +356,6 @@ case "$1" in
                    COMPL=$(echo $COMPL_RESULT | sed "s/[^0-9]//g")
                    [ -z "$COMPL" ] && COMPL=0
                    PERCT=$[ $COMPL * 100 / $COMPL_TOTAL ]
-
                    # check if dbus object exists
                    qdbus $dbusRef 1>/dev/null 2>&1
                    if [ "$?" -ne "0" ]; then
@@ -374,7 +368,7 @@ case "$1" in
                 done
                 qdbus $dbusRef close
                 if [ "$PERCT" = "ABORT" ]; then
-                  kill -9 $WAIT_PID 2>&1 >/dev/null
+                  [ -d /proc/${WAIT_PID} ] && kill -9 $WAIT_PID
                   KIA_ERR=1
                 else
                   KDIA_ERR=0
@@ -806,7 +800,7 @@ if [ -n "$BACKUP" ]; then
   if [ $TAR_ERR = 0 ]; then
     do_dialog msg "$TITLE" "Operation complete! \n\n Saved backup to $FILENAME"
   else
-    di_dialog error "$TITLE" "Creating $FILENAME Failed!!"
+    do_dialog error "$TITLE" "Creating $FILENAME Failed!!"
   fi
 fi
 }

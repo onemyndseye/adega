@@ -38,6 +38,9 @@
 # Default location for the wine-cellar
 CELLAR=$HOME/wine-cellar
 
+# Adega settings and and temp data
+ADEGA_DATA=$CELLAR/.adega
+
 # Precompiled versions of wine are obtained from this source.  Thanks to the
 # PlayOnLinux guys.  Will probably mirror this eventually
 WINE_REPO="http://mulx.playonlinux.com/wine/linux-i386"
@@ -105,7 +108,7 @@ Usage: $ADEGA   <options>
                                        WINEDLLPATH, WINELOADER, WINEVERSION, WINEVERPATH
                                        before executing the given command.
 
-        --reset                     :: Reset the user prefs stored in ~/.adega/adega.cfg
+        --reset                     :: Reset the user prefs.
 
         --update                    :: Check for an adega update.
 
@@ -202,7 +205,7 @@ case "$1" in
           ;;
 
       input)
-           # Text input
+          # Text input
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             zenity --title="$1" --entry --text="$2" --entry-text="$3"
@@ -214,7 +217,7 @@ case "$1" in
           ;;
 
         ask)
-           # Question
+          # Question
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             zenity --title="$1" --question --text="$2"
@@ -226,7 +229,7 @@ case "$1" in
           ;;
 
        menu)
-           # Menu/List
+          # Menu/List
           shift 1
           HGT="$1"
           WTH="$2"
@@ -255,7 +258,7 @@ case "$1" in
           ;;
 
       checks)
-            # Check list
+          # Check list
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             ITEM_STRING="$5"
@@ -292,7 +295,7 @@ case "$1" in
           ;;
 
       slider)
-            # Scale/Slider
+          # Scale/Slider
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             ARGS="--min-value=$3 --max-value=$4 --step=$5"
@@ -305,7 +308,7 @@ case "$1" in
           ;;
 
      fselect)
-            # File section
+          # File section
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
             zenity --file-selection
@@ -389,7 +392,7 @@ esac
 
 do_cleanup() {
 rm -rfd "$ADEGA_TEMP"
-rm -rfd ~/.adega/temp/
+rm -rfd $ADEGA_DATA/temp/
 }
 
 adega_updater() {
@@ -436,7 +439,7 @@ wine_env() {
 # If Wineversion isnt set make a last ditch effort to detect
 # the latest installed version and continue
 if [ -z "$WINEVERSION" ]; then
-  cd $CELLAR/WineVersions/
+  cd $CELLAR/.wineversions/
   COUNT="$(ls -p -1 |grep "/" |sed '{s|/||g}' |sort -r | wc -l)"
   if [ $COUNT = 0 ]; then
     # No wineversions installed.  Call the installer
@@ -448,7 +451,7 @@ if [ -z "$WINEVERSION" ]; then
   fi
 fi
 
-WINEVERPATH="$CELLAR/WineVersions/$WINEVERSION"
+WINEVERPATH="$CELLAR/.wineversions/$WINEVERSION"
 WINESERVER="$WINEVERPATH/usr/bin/wineserver"
 WINELOADER="$WINEVERPATH/usr/bin/wine"
 WINEDLLPATH="$WINEVERPATH/usr/lib/wine"
@@ -621,77 +624,77 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES winecfg
 }
 
 exec_winetricks() {
-if [ -f ~/.adega/winetricks.sh ]; then
+if [ -f $ADEGA_DATA/winetricks.sh ]; then
   # Check the age
-  CHK="$(find ~/.adega/winetricks.sh -mtime +${WINETRICKS_AGE})"
+  CHK="$(find $ADEGA_DATA/winetricks.sh -mtime +${WINETRICKS_AGE})"
   if [ -n "$CHK" ]; then
     # Age limit reached - check for update
     curl -s -f http://winezeug.googlecode.com/svn/trunk/winetricks >/dev/null && URL_ERROR="" || URL_ERROR=1
     if [ -z "$URL_ERROR" ]; then
       REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/winetricks |md5sum |awk '{print $1}')"
-      LOCAL_MD5="$(cat ~/.adega/winetricks.sh |md5sum |awk '{print $1}')"
+      LOCAL_MD5="$(cat $ADEGA_DATA/winetricks.sh |md5sum |awk '{print $1}')"
       if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
         # An update is available
         MSG="An updated version of winetricks is available. Would you like to update the local copy?"
         do_dialog ask "Adega: winetricks updater" "$MSG" && DO_UPDATE=1 || DO_UPDATE=""
         if [ -n "$DO_UPDATE" ]; then
           # Proceed with update
-          rm -f ~/.adega/winetricks.sh
-          curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >~/.adega/winetricks.sh
-          chmod +x ~/.adega/winetricks.sh
+          rm -f $ADEGA_DATA/winetricks.sh
+          curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >$ADEGA_DATA/winetricks.sh
+          chmod +x $ADEGA_DATA/winetricks.sh
         else
           # Skip the update this time.  Ask again in $WINETRICKS_AGE
-          touch ~/.adega/winetricks.sh
+          touch $ADEGA_DATA/winetricks.sh
         fi
       fi
     fi
   fi
 else
   # Need to get winetricks
-  mkdir -p ~/.adega/
-  curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >~/.adega/winetricks.sh
-  chmod +x ~/.adega/winetricks.sh
+  mkdir -p $ADEGA_DATA/
+  curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >$ADEGA_DATA/winetricks.sh
+  chmod +x $ADEGA_DATA/winetricks.sh
 fi
 
 wine_env
-WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/winetricks.sh
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES WINETRICKS_CACHE=$CELLAR/.winetrickscache $ADEGA_DATA/winetricks.sh
 }
 
 exec_wisotool() {
-if [ -f ~/.adega/wisotool.sh ]; then
+if [ -f $ADEGA_DATA/wisotool.sh ]; then
   # Check the age
-  CHK="$(find ~/.adega/wisotool.sh -mtime +${WINETRICKS_AGE})"
+  CHK="$(find $ADEGA_DATA/wisotool.sh -mtime +${WINETRICKS_AGE})"
   if [ -n "$CHK" ]; then
     # Age limit reached - check for update
     curl -s -f http://winezeug.googlecode.com/svn/trunk/wisotool >/dev/null && URL_ERROR="" || URL_ERROR=1
     if [ -z "$URL_ERROR" ]; then
       REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/wisotool |md5sum |awk '{print $1}')"
-      LOCAL_MD5="$(cat ~/.adega/wisotool.sh |md5sum |awk '{print $1}')"
+      LOCAL_MD5="$(cat $ADEGA_DATA/wisotool.sh |md5sum |awk '{print $1}')"
       if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
         # An update is available
         MSG="An updated version of wisotool is available. Would you like to update the local copy?"
         do_dialog ask "Adega: wisotool updater updater" "$MSG" && DO_UPDATE=1 || DO_UPDATE=""
         if [ -n "$DO_UPDATE" ]; then
           # Proceed with update
-          rm -f ~/.adega/wisotool.sh
-          curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >~/.adega/wisotool.sh
-          chmod +x ~/.adega/wisotool.sh
+          rm -f $ADEGA_DATA/wisotool.sh
+          curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >$ADEGA_DATA/wisotool.sh
+          chmod +x $ADEGA_DATA/wisotool.sh
         else
           # Skip the update this time.  Ask again in $WINETRICKS_AGE
-          touch ~/.adega/wisotool.sh
+          touch $ADEGA_DATA/wisotool.sh
         fi
       fi
     fi
   fi
 else
   # Need to get wisotool
-  mkdir -p ~/.adega/
-  curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >~/.adega/wisotool.sh
-  chmod +x ~/.adega/wisotool.sh
+  mkdir -p $ADEGA_DATA/
+  curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >$ADEGA_DATA/wisotool.sh
+  chmod +x $ADEGA_DATA/wisotool.sh
 fi
 
 wine_env
-WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES ~/.adega/wisotool.sh
+WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES $ADEGA_DATA/wisotool.sh
 }
 ########################################## END EXEC functions #########################################################
 
@@ -909,34 +912,37 @@ prefix_chooser() {
 MSG="Select a WINE Prefix"
 TITLE="Adega"
 cd $CELLAR
-PREFIX_LIST="$(ls -p -1 |grep "/" |grep -v "WineVersions" |sed '{s|/||g}'  |tr '\n' ";")"
+PREFIX_LIST="$(ls -p -1 |grep "/" |sed '{s|/||g}'  |tr '\n' ";")"
 GET_PREFIX="$(do_dialog menu 640 480 "$TITLE" "$MSG" "$PREFIX_LIST")"
 
 # Translate tag number from do_dialog
 if [ -n "$GET_PREFIX" ]; then
   CHOICE="$(echo $PREFIX_LIST |sed '{s/;/\n/g}' |sed '/^$/d' |sed -n "${GET_PREFIX}p")"
-  if [ -n "$CHOICE" ]; then
-    PREFIX=$CELLAR/$CHOICE
-    if [ -f $PREFIX/adega-prefix.cfg ]; then
-      . $PREFIX/adega-prefix.cfg
-    else
-      MSG="Afew options need to be set for this prefix"
-      do_dialog info "Adega" "$MSG"
-      prefix_options "return"
-      . $PREFIX/adega-prefix.cfg
-    fi
+  # Force an exit with error if CHOICE is null
+  [ -z "$CHOICE" ] && echo "An error has occured selecting a wine prefix!" && exit 1
+  PREFIX=$CELLAR/$CHOICE
+  if [ -f $PREFIX/adega-prefix.cfg ]; then
+    . $PREFIX/adega-prefix.cfg
   else
+    MSG="Afew options need to be set for this prefix"
+    do_dialog info "Adega" "$MSG"
+    prefix_options "return"
+    . $PREFIX/adega-prefix.cfg
+  fi
+else
+  if [ -z "$CLI" ]; then
+    # Not in CLI Mode - Back to main menu
+    action_menu
+  else
+    # CLI Mode - Exit with error
     echo "Must select a valid prefix"
     exit 1
   fi
-else
-  echo "Must select a prefix"
-  exit 1
 fi
 }
 
 wine_chooser() {
-cd $CELLAR/WineVersions
+cd $CELLAR/.wineversions
 COUNT=$(ls -p -1 |grep "/" |wc -l)
 if [ $COUNT = 0 ]; then
     # No wineversions installed.  Call the installer
@@ -952,12 +958,8 @@ else
   # Translate tag number from do_dialog
   if [ -n "$GET_VERS" ]; then
     CHOICE="$(echo $WINE_LIST |sed '{s/;/\n/g}' |sed '/^$/d' |sed -n "${GET_VERS}p")"
-    if [ -n "$CHOICE" ]; then
-      WINEVERSION=$CHOICE
-    else
-      echo "Must select a valid wine version"
-      exit 1
-    fi
+    [ -z "$CHOICE" ] && echo "An error has occured choosing a version of wine!" && exit 1
+    WINEVERSION=$CHOICE
   else
     echo "Must select a wine version"
     exit 1
@@ -981,7 +983,7 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
     # First have to translate the tag number given by do_dialog into a
     # actual result.
     INSTALL_VERSION=$(echo $VERSIONS | sed '{s/ /\n/g}' |sed -n "${i}p")
-    CHK="${CELLAR}/WineVersions/${INSTALL_VERSION}"
+    CHK="${CELLAR}/.wineversions/${INSTALL_VERSION}"
     if [ ! -d $CHK ]; then
       # Everything looks ok.  Proceed
       WINE_BOTTLE_FILE="$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |; s|;| |}' \
@@ -1005,7 +1007,7 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
       fi
     fi
   done
-  mv ${WINE_TMP}/wineversion/* ${CELLAR}/WineVersions/.
+  mv ${WINE_TMP}/wineversion/* ${CELLAR}/.wineversions/.
   rm -rfd "$WINE_TMP"
   do_dialog msg "Adega: Wine installer" "Operation Complete"
   return 0
@@ -1260,18 +1262,18 @@ ADEGA_SCRIPT="$(readlink -f $(type -a "$0" |awk '{print $3}'|head -n1))"
 
 # Define some temp space and trap exits
 trap "{ do_cleanup ; exit 0; }" EXIT
-mkdir -p $HOME/.adega/temp/
-ADEGA_TEMP=$(mktemp -d ~/.adega/temp/tmp.XXXXXXX)
+mkdir -p $ADEGA_DATA/temp/
+ADEGA_TEMP=$(mktemp -d $ADEGA_DATA/temp/tmp.XXXXXXX)
 
 # Check for cmdline reset prefs
 if [ "$1" = "--reset" ]; then
   shift 1
-  rm -f $HOME/.adega/adega.cfg 2>&1 >/dev/null
+  rm -f $ADEGA_DATA/adega.cfg 2>&1 >/dev/null
 fi
 
 # Check for/create user prefs
-if [ -f $HOME/.adega/adega.cfg ]; then
-  . $HOME/.adega/adega.cfg
+if [ -f $ADEGA_DATA/adega.cfg ]; then
+  . $ADEGA_DATA/adega.cfg
 else
   # Create defaults from this scripts header.
   echo "Creating user preferences file .."
@@ -1283,11 +1285,22 @@ else
   DATA_END=$(awk "$AWK_STRING_END" "$ADEGA_SCRIPT")
   SED_STRING=""$DATA_START","$DATA_END"p"
   echo $SED_STRING
-  cat "$ADEGA_SCRIPT" | sed -n "$SED_STRING" > $HOME/.adega/adega.cfg
+  cat "$ADEGA_SCRIPT" | sed -n "$SED_STRING" > $ADEGA_DATA/adega.cfg
 fi
 
 # check for updates
 adega_updater
+
+#### Backwards compat - Remove this at 0.9 #####
+if [ -d $CELLAR/Wineversions ]; then
+  cd $CELLAR
+  mv WineVersions .wineversions
+fi
+if [ -d $HOME/.adega ]; then
+  cd $CELLAR
+  mv $HOME/.adega .
+fi
+############ End Compat checks #################
 ###################################### END Init ##################################################
 
 while [ "$1" ]; do
@@ -1364,7 +1377,7 @@ while [ "$1" ]; do
                     break
                     ;;
                    *)
-                    if [ -z "$CLI_MODE" ]; then
+                    if [ -z "$CLI" ]; then
                       echo "Error: $1 is a invalid option."
                       do_help
                       exit 1

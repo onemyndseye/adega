@@ -1284,7 +1284,6 @@ else
   DATA_START=$(awk "$AWK_STRING_START" "$ADEGA_SCRIPT")
   DATA_END=$(awk "$AWK_STRING_END" "$ADEGA_SCRIPT")
   SED_STRING=""$DATA_START","$DATA_END"p"
-  echo $SED_STRING
   cat "$ADEGA_SCRIPT" | sed -n "$SED_STRING" > $ADEGA_DATA/adega.cfg
 fi
 

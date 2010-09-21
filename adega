@@ -34,7 +34,7 @@
 
 ##################################### Variables and Settings #######################################
 #
-##### Settings - DO NOT delete or change this line +++######
+##### Settings - DO NOT delete or change this line #########
 # Default location for the wine-cellar
 CELLAR=$HOME/wine-cellar
 
@@ -72,7 +72,7 @@ SHOW_LNKS=1
 # but more accurate. Comment to turn off
 AUTO_REBUILD_PROGRAMS=1
 
-##### END Settings - DO NOT delete or change this line +++######
+##### END Settings - DO NOT delete or change this line #########
 #
 ########################################################################################################
 #######################################  END Settings ##################################################
@@ -808,8 +808,20 @@ fi
 prefix_create() {
 MSG="Enter a directory name for this prefix:"
 NAME="$(do_dialog input "Adega: create prefix" "$MSG")"
-PREFIX="${CELLAR}/${NAME}"
-mkdir -p "$PREFIX"
+
+# Sanitize the input to remove spaces and illegal charactors
+SHORT_NAME="$(echo "$NAME" | sed 's/[^a-z|A-Z|0-9]//g')"
+PREFIX="${CELLAR}/${SHORT_NAME}"
+
+if [ -d "$PREFIX" ]; then
+  MSG1="You have attempted to create a prefix ($SHORT_NAME) but it seems to already exist."
+  MSG2="Check your cellar and try again."
+  MSG="$MSG1 $MSG2"
+  do_dialog error "Adega: create prefix" "$MSG"
+  return 1
+else
+  mkdir -p "$PREFIX"
+fi
 
 prefix_options "return"
 

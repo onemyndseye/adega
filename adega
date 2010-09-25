@@ -1,14 +1,14 @@
 #!/bin/bash
 #########################################################################################
 ##          FILE:  adega
-##       VERSION:  0.8-rc5
+##       VERSION:  0.8-rc6
 ##
 ##   DESCRIPTION:  Derrived from the Portugese word for wine estate or wine cellar,
 ##                 Adega is a simple program to help with the task of managing and
 ##                 configuring your wine prefixes doing so completely independant
 ##                 of your systems default wine install and prefix.
 ##
-##  REQUIREMENTS:  curl, icoutils, imagemagick, wget
+##  REQUIREMENTS:  curl, icoutils, imagemagick, wget, zenity|kdialog
 ##     MAYBE ALSO: ia32-libs lib32asound2 libc6-i386 lib32nss-mdns binfmt-support
 ##                 winbind ttf-symbol-replacement, ttf-mscorefonts-installer
 ##
@@ -60,8 +60,8 @@ ADEGA_AGE=7
 WINEDLLOVERRIDES=winemenubuilder.exe=d
 
 # Filter out Lnks/exe's that match these patterns.
-IGNORE_WORDS="application data|iexplore|temp|installshield|safe mode|uninstall|"
-IGNORE_URLS="http:|file:|"
+IGNORE_WORDS="application data|iexplore|temp|installshield|safe mode|uninstall"
+IGNORE_URLS="http:|file:"
 IGNORE_EXTS=".url|.htm|.html|.pdf|.txt|.doc"
 
 
@@ -702,7 +702,7 @@ WINEPREFIX=$PREFIX WINEDLLOVERRIDES=$WINEDLLOVERRIDES $ADEGA_DATA/wisotool.sh
 get_programs() {
 ## Function to list Programs in $PREFIX lnks first.
 
-IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
+IGNORE_PATTERNS="${IGNORE_WORDS}|${IGNORE_URLS}|${IGNORE_EXTS}"
 if [ -n "$SHOW_LNKS" ]; then
   find $PREFIX -name "*.lnk" |egrep -i -v  "$IGNORE_PATTERNS"
 fi
@@ -720,7 +720,7 @@ LIST=$PREFIX/adega-programs.list
 wine_env
 
 ### Build a EXE List
-IGNORE_PATTERNS="${IGNORE_WORDS}${IGNORE_URLS}${IGNORE_EXTS}"
+IGNORE_PATTERNS="${IGNORE_WORDS}|${IGNORE_URLS}|${IGNORE_EXTS}"
 TMP_LIST=$(mktemp -p $ADEGA_TEMP)
 IFS=$'\n'
 for i in $(get_programs); do
@@ -849,37 +849,42 @@ WINEPREFIX=$PREFIX wineboot
 
 prefix_run() {
 [ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
-RUNLNK="$1"
+
+## Check for passed Arg
+[ -n "$1" ] && RUNLNK="$1"
 
 ## Set Wine env
 wine_env
 
-if [ -z "$RUNLNK" ]; then
-  program_chooser
-  EXE="$RUNLNK"
-else
-  EXE="$(WINEPREFIX=$PREFIX winepath -w "$RUNLNK")"
-fi
-
-if [ -n "$EXE" ]; then
-  EXT=${EXE##*.}
-  if [ "$EXT" = "lnk" ]; then
-    TARGET_EXE="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
-    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath -u "$TARGET_EXE")")"
+if [ -n "$RUNLNK" ]; then
+  if [ -f "$RUNLNK" ]; then
+    # If this file exist it must be a unix path.  convert it to windows.
+    EXE="$(WINEPREFIX=$PREFIX winepath -w "$RUNLNK")"
   else
-    TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath "$EXE")")"
+    # If it doesnt exist we'll assume its already a windows path.  dont touch.
+   EXE="$RUNLNK"
   fi
-  LOG="${PREFIX}/last-session.log"
-  cd "${TARGET}"
-  echo "Will use the following prefix:  $PREFIX"
-  echo "Will log messages to $LOG .."
-  echo "Starting $EXE ..."
-  [ -n "$TARGET_EXE" ] && echo "Target EXE: $TARGET_EXE ..."
-  echo "CWD is: $(pwd) .."
-  exec_wine "$EXE" >$LOG 2>&1
-else
-  echo "An error has occured!! .."
-  exit 23
+  # Check for a target EXE/Lnk and process the needed info.
+  if [ -n "$EXE" ]; then
+    EXT=${EXE##*.}
+    if [ "$EXT" = "lnk" ]; then
+      TARGET_EXE="$(strings "$(WINEPREFIX=$PREFIX winepath -u "$EXE")" | grep -m1 '[A-Z]:\\.')"
+      TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath -u "$TARGET_EXE")")"
+    else
+      TARGET="$(dirname "$(WINEPREFIX=$PREFIX winepath "$EXE")")"
+    fi
+    LOG="${PREFIX}/last-session.log"
+    cd "${TARGET}"
+    echo "Will use the following prefix:  $PREFIX"
+    echo "Will log messages to $LOG .."
+    echo "Starting $EXE ..."
+    [ -n "$TARGET_EXE" ] && echo "Target EXE: $TARGET_EXE ..."
+    echo "CWD is: $(pwd) .."
+    exec_wine "$EXE" >$LOG 2>&1
+  else
+    echo "An error has occured!! .."
+    exit 23
+  fi
 fi
 }
 ###################################### END Prefix functions ########################################################
@@ -1130,11 +1135,22 @@ RUNMODE=$(do_dialog menu 800 600 "$TITLE" "$MSG" "$MENU_STRING")
 
 case "$RUNMODE" in
                  1)
-                   prefix_run
+                   program_chooser
+                   if [ -n "$RUNLNK" ]; then
+                     prefix_run
+                   else
+                     # No program selected. Back to run menu
+                     run_menu "$END_CMD"
+                   fi
                    ;;
                  2)
                    wine_exe_chooser
-                   prefix_run "$RUNLNK"
+                   if [ -z "$RUNLNK" ]; then
+                     prefix_run "$RUNLNK"
+                   else
+                     # No program selected. Back to run menu
+                     run_menu "$END_CMD"
+                   fi
                    ;;
 
                  3)

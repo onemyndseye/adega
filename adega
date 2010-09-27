@@ -1145,7 +1145,7 @@ case "$RUNMODE" in
                    ;;
                  2)
                    wine_exe_chooser
-                   if [ -z "$RUNLNK" ]; then
+                   if [ -n "$RUNLNK" ]; then
                      prefix_run "$RUNLNK"
                    else
                      # No program selected. Back to run menu

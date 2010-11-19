@@ -298,11 +298,11 @@ case "$1" in
           # Scale/Slider
           shift 1
           if [ "$DIALOG_MODE" = "zenity" ]; then
-            ARGS="--min-value=$3 --max-value=$4 --step=$5"
+            ARGS="--min-value=$3 --max-value=$4 --step=$5 --value=$6"
             zenity --scale --title="$1" --text="$2" $ARGS
             return $?
           else
-            kdialog --name "Adega" --title "$1" --slider "$2" $3 $4 $5 2>/dev/null
+            kdialog --name "Adega" --title "$1" --slider "$2" $3 $4 $5 $6 2>/dev/null
             return $?
           fi
           ;;
@@ -553,19 +553,22 @@ NEWLAUNCHER_EOF
 }
 
 wine_set_vidmem() {
+set -x
 [ -f $PREFIX/adega-prefix.cfg ] && . $PREFIX/adega-prefix.cfg
 
 ## Setup WINE enviroment
 wine_env
 
+
 # Fill autodetected settings
 VGA_PCIID="$(lspci |grep VGA |sed -e 's/^\([^ ]* \).*/\1/')"
 VGA_MEMORYSIZE="$(lspci -v -s $VGA_PCIID |grep Memory |sed -e 's/.*size=\([0-9]*\).*/\1/' |sort -g |tail -n1)"
 
+
 # Ask user for value
 MSG="Set video memory size in MB"
 TITLE="Adega: $(basename $PREFIX) - Video memory"
-MEMORYSIZE=$(do_dialog "$TITLE" "$MSG" 16 2048 8)
+MEMORYSIZE=$(do_dialog slider "$TITLE" "$MSG" 0 2048 8 $VGA_MEMORYSIZE)
 
 REGFILE="$PREFIX/drive_c/tmpreg.reg"
 cat <<REG_EOF >$REGFILE

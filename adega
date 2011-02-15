@@ -1330,7 +1330,7 @@ while [ "$1" ]; do
                     ;;
             --prefix|-p)
                     CLI=1
-                    if [ -d $CELLAR/$2 ]; then
+                    if [ -n "$2" -a -d $CELLAR/$2 ]; then
                       PREFIX=$CELLAR/$2
                     else
                       echo "Invalid prefix"

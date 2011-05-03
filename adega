@@ -632,9 +632,9 @@ if [ -f $ADEGA_DATA/winetricks.sh ]; then
   CHK="$(find $ADEGA_DATA/winetricks.sh -mtime +${WINETRICKS_AGE})"
   if [ -n "$CHK" ]; then
     # Age limit reached - check for update
-    curl -s -f http://winezeug.googlecode.com/svn/trunk/winetricks >/dev/null && URL_ERROR="" || URL_ERROR=1
+    curl -s -f http://dl.dropbox.com/u/1397571/linux/projects/misc/winetricks.sh >/dev/null && URL_ERROR="" || URL_ERROR=1
     if [ -z "$URL_ERROR" ]; then
-      REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/winetricks |md5sum |awk '{print $1}')"
+      REMOTE_MD5="$(curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/winetricks.sh |md5sum |awk '{print $1}')"
       LOCAL_MD5="$(cat $ADEGA_DATA/winetricks.sh |md5sum |awk '{print $1}')"
       if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
         # An update is available
@@ -643,7 +643,7 @@ if [ -f $ADEGA_DATA/winetricks.sh ]; then
         if [ -n "$DO_UPDATE" ]; then
           # Proceed with update
           rm -f $ADEGA_DATA/winetricks.sh
-          curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >$ADEGA_DATA/winetricks.sh
+          curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/winetricks.sh >$ADEGA_DATA/winetricks.sh
           chmod +x $ADEGA_DATA/winetricks.sh
         else
           # Skip the update this time.  Ask again in $WINETRICKS_AGE
@@ -655,7 +655,7 @@ if [ -f $ADEGA_DATA/winetricks.sh ]; then
 else
   # Need to get winetricks
   mkdir -p $ADEGA_DATA/
-  curl -s http://winezeug.googlecode.com/svn/trunk/winetricks >$ADEGA_DATA/winetricks.sh
+  curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/winetricks.sh >$ADEGA_DATA/winetricks.sh
   chmod +x $ADEGA_DATA/winetricks.sh
 fi
 
@@ -669,9 +669,9 @@ if [ -f $ADEGA_DATA/wisotool.sh ]; then
   CHK="$(find $ADEGA_DATA/wisotool.sh -mtime +${WINETRICKS_AGE})"
   if [ -n "$CHK" ]; then
     # Age limit reached - check for update
-    curl -s -f http://winezeug.googlecode.com/svn/trunk/wisotool >/dev/null && URL_ERROR="" || URL_ERROR=1
+    curl -s -f http://dl.dropbox.com/u/1397571/linux/projects/misc/wisotool.sh >/dev/null && URL_ERROR="" || URL_ERROR=1
     if [ -z "$URL_ERROR" ]; then
-      REMOTE_MD5="$(curl -s http://winezeug.googlecode.com/svn/trunk/wisotool |md5sum |awk '{print $1}')"
+      REMOTE_MD5="$(curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/wisotool.sh |md5sum |awk '{print $1}')"
       LOCAL_MD5="$(cat $ADEGA_DATA/wisotool.sh |md5sum |awk '{print $1}')"
       if [ "$REMOTE_MD5" != "$LOCAL_MD5" ]; then
         # An update is available
@@ -680,7 +680,7 @@ if [ -f $ADEGA_DATA/wisotool.sh ]; then
         if [ -n "$DO_UPDATE" ]; then
           # Proceed with update
           rm -f $ADEGA_DATA/wisotool.sh
-          curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >$ADEGA_DATA/wisotool.sh
+          curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/wisotool.sh >$ADEGA_DATA/wisotool.sh
           chmod +x $ADEGA_DATA/wisotool.sh
         else
           # Skip the update this time.  Ask again in $WINETRICKS_AGE
@@ -692,7 +692,7 @@ if [ -f $ADEGA_DATA/wisotool.sh ]; then
 else
   # Need to get wisotool
   mkdir -p $ADEGA_DATA/
-  curl -s http://winezeug.googlecode.com/svn/trunk/wisotool >$ADEGA_DATA/wisotool.sh
+  curl -s http://dl.dropbox.com/u/1397571/linux/projects/misc/wisotool.sh >$ADEGA_DATA/wisotool.sh
   chmod +x $ADEGA_DATA/wisotool.sh
 fi
 

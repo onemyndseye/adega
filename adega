@@ -995,8 +995,9 @@ if [ -n "$WINE_INSTALL_VERSIONS" ]; then
     if [ ! -d $CHK ]; then
       # Everything looks ok.  Proceed
       WINE_BOTTLE_FILE="$(curl -s ${WINE_REPO}/LIST | sed -e '{s|;| |; s|;| |}' \
-      |grep -m 1 -F "wine-${INSTALL_VERSION}." |awk '{print $1}')"
-      WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
+      |grep -m 1 -F "${INSTALL_VERSION}" |awk '{print $1}')"
+      echo "$INSTALL_VERSION"
+      echo "$WINE_BOTTLE_FILE"
 
       # Download WINE
       WINE_URL="$WINE_REPO/$WINE_BOTTLE_FILE"
@@ -1034,7 +1035,9 @@ cd "$DEST"
 
 FILE=$(basename "$DOWNLOAD_URL")
 # get file size
-TMP=$(curl -sI "$1" | grep Content-Length | sed "s/[^0-9]//g")
+TMP=$(curl -sI "$DOWNLOAD_URL" | grep Content-Length | sed "s/[^0-9]//g")
+
+echo $DOWNLOAD_URL
 SIZE=$[ $TMP /  1024 ]
 
 CMD="wget -q "$DOWNLOAD_URL""
